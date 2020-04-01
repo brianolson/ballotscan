@@ -50,12 +50,42 @@ func generalBrightnessHistogram(im image.Image) []uint {
 	return out
 }
 
-// TODO: detect a reasonable threshold from brightness histogram
-const threshold = 128
+// https://en.wikipedia.org/wiki/Otsu%27s_method
+func otsuThreshold(hist []uint) uint8 {
+	sumB := uint(0)
+	wB := uint(0)
+	max := 0.0
+	total := uint(0)
+	sum1 := uint(0)
+	best := 0
+	for i, hv := range hist {
+		total += hv
+		sum1 += uint(i) * hv
+	}
+	for i := 1; i < 256; i++ {
+		if wB > 0 && total > wB {
+			wF := total - wB
+			mF := float64(sum1-sumB) / float64(wF)
+			fwB := float64(wB)
+			fwF := float64(wF)
+			fsumB := float64(sumB)
+			val := fwB * fwF * ((fsumB / fwB) - mF) * ((fsumB / fwB) - mF)
+			if val >= max {
+				best = i
+				max = val
+			}
+		}
+		wB += hist[i]
+		sumB += uint(i) * hist[i]
+	}
+	return uint8(best)
+}
+
+//const threshold = 128
 const darkPxCountThreshold = 4
 
 // Search the Y compoment of YCbCr for a left edge
-func yLeftLineFind(it *image.YCbCr, ySeekCenter int) (edgeX int) {
+func yLeftLineFind(it *image.YCbCr, ySeekCenter int, threshold uint8) (edgeX int) {
 	darkPxCount := 0
 	leftEdge := 0
 	rightEdge := 10
@@ -83,7 +113,7 @@ func yLeftLineFind(it *image.YCbCr, ySeekCenter int) (edgeX int) {
 	return rightEdge - 1
 }
 
-func yTopLineFind(it *image.YCbCr, xSeekCenter int) (edgeY int) {
+func yTopLineFind(it *image.YCbCr, xSeekCenter int, threshold uint8) (edgeY int) {
 	darkPxCount := 0
 	topEdge := 0
 	bottomEdge := 10
@@ -119,11 +149,11 @@ func main() {
 	maybeFail(err, "%s: %s", origname, err)
 	r.Close()
 	fmt.Printf("orig %s %T\n", format, orig)
-	ohist := generalBrightnessHistogram(orig)
-	for i, v := range ohist {
-		fmt.Printf("hist[%3d] %6d\n", i, v)
-	}
-	os.Exit(0)
+	// ohist := generalBrightnessHistogram(orig)
+	// for i, v := range ohist {
+	// 	fmt.Printf("hist[%3d] %6d\n", i, v)
+	// }
+	// os.Exit(0)
 	fname := "resources/testdata/20200330/scan_20200330_102310_1.jpg"
 	r, err = os.Open(fname)
 	maybeFail(err, "%s: %s", fname, err)
@@ -144,8 +174,10 @@ func main() {
 		//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
 		//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
 
+		hist := yHistogram(it)
+		threshold := otsuThreshold(hist)
+		fmt.Printf("Otsu threshold %d\n", threshold)
 		if false {
-			hist := yHistogram(it)
 			for i, v := range hist {
 				fmt.Printf("hist[%3d] %6d\n", i, v)
 			}
@@ -153,7 +185,7 @@ func main() {
 		misscount := 0
 		hitcount := 0
 		for y := 100; y < it.Rect.Max.Y-100; y += 50 {
-			xle := yLeftLineFind(it, y)
+			xle := yLeftLineFind(it, y, threshold)
 			if xle < it.Rect.Max.X/2 {
 				fmt.Printf("[%d,%d]\n", xle, y)
 				hitcount++
@@ -165,7 +197,7 @@ func main() {
 		misscount = 0
 		hitcount = 0
 		for x := 100; x < it.Rect.Max.X-100; x += 50 {
-			yte := yTopLineFind(it, x)
+			yte := yTopLineFind(it, x, threshold)
 			if yte < it.Rect.Max.Y/2 {
 				fmt.Printf("[%d,%d]\n", x, yte)
 				hitcount++
