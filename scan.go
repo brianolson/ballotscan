@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"os"
 )
 
@@ -141,71 +143,245 @@ func yTopLineFind(it *image.YCbCr, xSeekCenter int, threshold uint8) (edgeY int)
 	return bottomEdge - 1
 }
 
-func main() {
-	origname := "resources/testdata/20200330/a.png"
+// https://en.wikipedia.org/wiki/Simple_linear_regression#Fitting_the_regression_line
+func ordinaryLeastSquares(points []point) (slope, intercept float64) {
+	xsum := int64(0)
+	ysum := int64(0)
+	for _, pt := range points {
+		xsum += int64(pt.x)
+		ysum += int64(pt.y)
+	}
+	xavg := float64(xsum) / float64(len(points))
+	yavg := float64(ysum) / float64(len(points))
+	N := 0.0
+	D := 0.0
+	for _, pt := range points {
+		dx := (float64(pt.x) - xavg)
+		N += dx * (float64(pt.y) - yavg)
+		D += dx * dx
+	}
+	slope = N / D
+	intercept = yavg - (slope * xavg)
+	return
+}
+
+// https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line
+func pointLineDistance(slope, intercept float64, x, y int) float64 {
+	// ax + by + c = 0
+	// (x0, y0)
+	// abs(a*x0 + b*y0 + c)/sqrt(a*a + b*b)
+	// y = slope*x + intercept
+	// a = slope
+	// b = -1
+	// c = intercept
+	return math.Abs((slope*float64(x))+(-1.0*float64(y))+intercept) / math.Sqrt((slope*slope)+1)
+}
+
+type point struct {
+	x int
+	y int
+}
+
+type Scanner struct {
+	bj BubblesJson
+
+	orig         image.Image
+	origPxPerPt  float64
+	origTopLeft  point
+	origTopRight point
+}
+
+func (s *Scanner) readBubblesJson(path string) error {
+	fin, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer fin.Close()
+	jd := json.NewDecoder(fin)
+	return jd.Decode(&s.bj)
+}
+
+func (s *Scanner) readOrigImage(origname string) error {
 	r, err := os.Open(origname)
 	maybeFail(err, "%s: %s", origname, err)
 	orig, format, err := image.Decode(r)
 	maybeFail(err, "%s: %s", origname, err)
-	r.Close()
-	fmt.Printf("orig %s %T\n", format, orig)
+	defer r.Close()
+	s.orig = orig
+	orect := orig.Bounds()
+	if orect.Min.X != 0 || orect.Min.Y != 0 {
+		return fmt.Errorf("nonzero origin for original pic. WAT?\n")
+	}
+	fmt.Printf("orig %s %T %v\n", format, orig, orect)
+	origPxPerPtX := float64(orect.Max.X-orect.Min.X) / s.bj.DrawSettings.PageSize[0]
+	origPxPerPtY := float64(orect.Max.Y-orect.Min.Y) / s.bj.DrawSettings.PageSize[1]
+	if math.Abs((origPxPerPtY/origPxPerPtX)-1) > 0.01 {
+		return fmt.Errorf("orig scale not square: mx = %f, my = %f\n", origPxPerPtX, origPxPerPtY)
+	}
+	s.origPxPerPt = (origPxPerPtX + origPxPerPtY) / 2.0
+	s.origTopLeft = point{
+		x: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
+		y: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
+	}
+	s.origTopRight = point{
+		x: int((s.bj.DrawSettings.PageSize[0] - s.bj.DrawSettings.PageMargin) * s.origPxPerPt),
+		y: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
+	}
+	fmt.Printf("top line orig (%d,%d)-(%d,%d)\n", s.origTopLeft.x, s.origTopLeft.y, s.origTopRight.x, s.origTopRight.y)
+	return nil
+}
+
+func (s *Scanner) readScannedImage(fname string) error {
+	r, err := os.Open(fname)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	im, format, err := image.Decode(r)
+	if err != nil {
+		return err
+	}
+	//fmt.Printf("im %s %T %v\n", format, im, im.Bounds())
+	switch it := im.(type) {
+	case *image.YCbCr:
+		return s.processYCbCr(it)
+	default:
+		return fmt.Errorf("unknown image type %s %T", format, im)
+	}
+}
+
+func (s *Scanner) processYCbCr(it *image.YCbCr) error {
+	fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
+	pxy(it, 0, 0)
+	pxy(it, 1, 0)
+	pxy(it, 2, 0)
+	pxy(it, 0, 1)
+	pxy(it, 0, 2)
+	pxy(it, 50, 50)
+	pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
+	//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
+	//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
+
+	hist := yHistogram(it)
+	threshold := otsuThreshold(hist)
+	fmt.Printf("Otsu threshold %d\n", threshold)
+	if false {
+		for i, v := range hist {
+			fmt.Printf("hist[%3d] %6d\n", i, v)
+		}
+	}
+	misscount := 0
+	hitcount := 0
+	for y := 100; y < it.Rect.Max.Y-100; y += 50 {
+		xle := yLeftLineFind(it, y, threshold)
+		if xle < it.Rect.Max.X/2 {
+			//fmt.Printf("[%d,%d]\n", xle, y)
+			hitcount++
+		} else {
+			misscount++
+		}
+	}
+	fmt.Printf("left line %d hit %d miss\n", hitcount, misscount)
+	misscount = 0
+	hitcount = 0
+	topPoints := make([]point, 0, 100)
+	for x := 100; x < it.Rect.Max.X-100; x += 50 {
+		yte := yTopLineFind(it, x, threshold)
+		if yte < it.Rect.Max.Y/2 {
+			//fmt.Printf("[%d,%d]\n", x, yte)
+			topPoints = append(topPoints, point{x, yte})
+			hitcount++
+		} else {
+			misscount++
+		}
+	}
+	slope, intercept := ordinaryLeastSquares(topPoints)
+	fmt.Printf("top line %d hit %d miss, slope=%f intercept=%f\n", hitcount, misscount, slope, intercept)
+	worstd := 0.0
+	for _, pt := range topPoints {
+		d := pointLineDistance(slope, intercept, pt.x, pt.y)
+		//fmt.Printf(" %0.2f", d)
+		if d > worstd {
+			worstd = d
+		}
+	}
+	//fmt.Printf("\n")
+	x := topPoints[0].x
+	y := topPoints[0].y
+	const step = 5
+	for true {
+		nx := x - step
+		yte := yTopLineFind(it, nx, threshold)
+		d := pointLineDistance(slope, intercept, nx, yte)
+		if d > worstd {
+			break
+		}
+		x = nx
+		y = yte
+	}
+	topLeftX := x
+	topLeftY := y
+	last := len(topPoints) - 1
+	x = topPoints[last].x
+	y = topPoints[last].y
+	for true {
+		nx := x + step
+		yte := yTopLineFind(it, nx, threshold)
+		d := pointLineDistance(slope, intercept, nx, yte)
+		if d > worstd {
+			break
+		}
+		x = nx
+		y = yte
+	}
+	topRightX := x
+	topRightY := y
+	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeftX, topLeftY, topRightX, topRightY)
+	return nil
+}
+
+type DrawSettings struct {
+	PageSize   []float64 `json:"pagesize"`
+	PageMargin float64   `json:"pageMargin"`
+	// TODO: lots of fields ignored
+}
+
+type BubblesJson struct {
+	DrawSettings *DrawSettings            `json:"draw_settings"`
+	Bubbles      []map[string]interface{} `json:"bubbles"`
+}
+
+func readBubbles(path string) (out *BubblesJson, err error) {
+	fin, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	out = new(BubblesJson)
+	//var xo bubblesJson
+	jd := json.NewDecoder(fin)
+	err = jd.Decode(out)
+	fin.Close()
+	//out = &xo
+	return
+}
+
+func main() {
+	var err error
+	var s Scanner
+	bfname := "resources/testdata/20200403/bubbles.json"
+	//ob, err := readBubbles(bfname)
+	err = s.readBubblesJson(bfname)
+	maybeFail(err, "%s: %s", bfname, err)
+	fmt.Printf("ds %#v\n", s.bj.DrawSettings)
+	origname := "resources/testdata/20200330/a.png"
+	err = s.readOrigImage(origname)
+	maybeFail(err, "%s: %s\n", origname, err)
 	// ohist := generalBrightnessHistogram(orig)
 	// for i, v := range ohist {
 	// 	fmt.Printf("hist[%3d] %6d\n", i, v)
 	// }
 	// os.Exit(0)
 	fname := "resources/testdata/20200330/scan_20200330_102310_1.jpg"
-	r, err = os.Open(fname)
-	maybeFail(err, "%s: %s", fname, err)
-	im, format, err := image.Decode(r)
-	maybeFail(err, "%s: %s", fname, err)
-	r.Close()
-	fmt.Printf("im %s %T\n", format, im)
-	switch it := im.(type) {
-	case *image.YCbCr:
-		fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
-		pxy(it, 0, 0)
-		pxy(it, 1, 0)
-		pxy(it, 2, 0)
-		pxy(it, 0, 1)
-		pxy(it, 0, 2)
-		pxy(it, 50, 50)
-		pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
-		//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
-		//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
-
-		hist := yHistogram(it)
-		threshold := otsuThreshold(hist)
-		fmt.Printf("Otsu threshold %d\n", threshold)
-		if false {
-			for i, v := range hist {
-				fmt.Printf("hist[%3d] %6d\n", i, v)
-			}
-		}
-		misscount := 0
-		hitcount := 0
-		for y := 100; y < it.Rect.Max.Y-100; y += 50 {
-			xle := yLeftLineFind(it, y, threshold)
-			if xle < it.Rect.Max.X/2 {
-				fmt.Printf("[%d,%d]\n", xle, y)
-				hitcount++
-			} else {
-				misscount++
-			}
-		}
-		fmt.Printf("left line %d hit %d miss\n", hitcount, misscount)
-		misscount = 0
-		hitcount = 0
-		for x := 100; x < it.Rect.Max.X-100; x += 50 {
-			yte := yTopLineFind(it, x, threshold)
-			if yte < it.Rect.Max.Y/2 {
-				fmt.Printf("[%d,%d]\n", x, yte)
-				hitcount++
-			} else {
-				misscount++
-			}
-		}
-		fmt.Printf("top line %d hit %d miss\n", hitcount, misscount)
-	default:
-	}
+	err = s.readScannedImage(fname)
+	maybeFail(err, "%s: %s\n", fname, err)
 }
