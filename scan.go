@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	_ "image/jpeg"
+	"image/png"
 	_ "image/png"
 	"math"
 	"os"
@@ -19,9 +20,9 @@ func maybeFail(err error, format string, args ...interface{}) {
 	os.Exit(1)
 }
 
-func pxy(it *image.YCbCr, x, y int) {
-	fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", x, y, it.YOffset(x, y), x, y, it.COffset(x, y))
-}
+// func pxy(it *image.YCbCr, x, y int) {
+// 	fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", x, y, it.YOffset(x, y), x, y, it.COffset(x, y))
+// }
 
 func yHistogram(it *image.YCbCr) []uint {
 	out := make([]uint, 256)
@@ -83,7 +84,6 @@ func otsuThreshold(hist []uint) uint8 {
 	return uint8(best)
 }
 
-//const threshold = 128
 const darkPxCountThreshold = 4
 
 // Search the Y compoment of YCbCr for a left edge
@@ -182,6 +182,51 @@ type point struct {
 	y int
 }
 
+type transform struct {
+	orig    point
+	scale   float64
+	rotRads float64
+	costh   float64
+	sinth   float64
+	dest    point
+}
+
+func newTransform(origTopLeft, origTopRight, destTopLeft, destTopRight point) transform {
+	dy := destTopRight.y - destTopLeft.y
+	dx := destTopRight.x - destTopLeft.x
+	rotRads := math.Atan2(float64(dy), float64(dx))
+	actualTopLineLengthPx := math.Sqrt(float64((dx * dx) + (dy * dy)))
+	ody := origTopRight.y - origTopLeft.y
+	odx := origTopRight.x - origTopLeft.x
+	origTopLineLength := math.Sqrt(float64((odx * odx) + (ody * ody)))
+	scale := actualTopLineLengthPx / origTopLineLength
+	costh := math.Cos(rotRads)
+	sinth := math.Sin(rotRads)
+	return transform{
+		orig:    origTopLeft,
+		scale:   scale,
+		rotRads: rotRads,
+		costh:   costh,
+		sinth:   sinth,
+		dest:    destTopLeft,
+	}
+}
+
+func (t transform) transform(origx, origy int) (x, y int) {
+	// TODO: compose this into a transform matrix
+	x = origx - t.orig.x
+	y = origy - t.orig.y
+	nx := float64(x) * t.scale
+	ny := float64(y) * t.scale
+
+	x2 := (nx * t.costh) - (ny * t.sinth)
+	y2 := (nx * t.sinth) + (ny * t.costh)
+
+	x = int(x2) + t.dest.x
+	y = int(y2) + t.dest.y
+	return
+}
+
 type Scanner struct {
 	bj BubblesJson
 
@@ -250,15 +295,46 @@ func (s *Scanner) readScannedImage(fname string) error {
 	}
 }
 
+// For some (x,y) point in the original image, return (x,y) in the scanned image
+func (s *Scanner) pointOrigToScanned(origx, origy int, topLeft, topRight point) (x, y int, err error) {
+	dy := topRight.y - topLeft.y
+	dx := topRight.x - topLeft.x
+	rotRads := math.Atan2(float64(dy), float64(dx))
+	actualTopLineLengthPx := math.Sqrt(float64((dx * dx) + (dy * dy)))
+	ody := s.origTopRight.y - s.origTopLeft.y
+	odx := s.origTopRight.x - s.origTopLeft.x
+	origTopLineLength := math.Sqrt(float64((odx * odx) + (ody * ody)))
+	scale := actualTopLineLengthPx / origTopLineLength
+	fmt.Printf("rotate %f radians, scale %f\n", rotRads, scale)
+
+	// x,y in orig frame
+	x = origx - s.origTopLeft.x
+	y = origy - s.origTopLeft.y
+	nx := float64(x) * scale
+	ny := float64(y) * scale
+
+	costh := math.Cos(rotRads)
+	sinth := math.Sin(rotRads)
+	x2 := (nx * costh) - (ny * sinth)
+	y2 := (nx * sinth) + (ny * costh)
+
+	x = int(x2) + topLeft.x
+	y = int(y2) + topLeft.y
+	return
+}
+
 func (s *Scanner) processYCbCr(it *image.YCbCr) error {
+	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
+		return fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
+	}
 	fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
-	pxy(it, 0, 0)
-	pxy(it, 1, 0)
-	pxy(it, 2, 0)
-	pxy(it, 0, 1)
-	pxy(it, 0, 2)
-	pxy(it, 50, 50)
-	pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
+	// pxy(it, 0, 0)
+	// pxy(it, 1, 0)
+	// pxy(it, 2, 0)
+	// pxy(it, 0, 1)
+	// pxy(it, 0, 2)
+	// pxy(it, 50, 50)
+	// pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
 	//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
 	//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
 
@@ -319,8 +395,9 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 		x = nx
 		y = yte
 	}
-	topLeftX := x
-	topLeftY := y
+	topLeft := point{x, y}
+	//topLeftX := x
+	//topLeftY := y
 	last := len(topPoints) - 1
 	x = topPoints[last].x
 	y = topPoints[last].y
@@ -334,10 +411,51 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 		x = nx
 		y = yte
 	}
-	topRightX := x
-	topRightY := y
-	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeftX, topLeftY, topRightX, topRightY)
-	return nil
+	//topRightX := x
+	//topRightY := y
+	topRight := point{x, y}
+	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeft.x, topLeft.y, topRight.x, topRight.y)
+
+	origToScanned := newTransform(s.origTopLeft, s.origTopRight, topLeft, topRight)
+	// TODO: compase a 2d transformation matrix
+	// translate(-topLeftX, -topLeftY)
+	// rotate(-rotRads)
+	// scale
+	// dy := topRightY - topLeftY
+	// dx := topRightX - topLeftX
+	// rotRads := math.Atan2(float64(dy), float64(dx))
+	// actualTopLineLengthPx := math.Sqrt(float64((dx * dx) + (dy * dy)))
+	// ody := s.origTopRight.y - s.origTopLeft.y
+	// odx := s.origTopRight.x - s.origTopLeft.x
+	// origTopLineLength := math.Sqrt(float64((odx * odx) + (ody * ody)))
+	// scale := actualTopLineLengthPx / origTopLineLength
+	// fmt.Printf("rotate %f radians, scale %f\n", rotRads, scale)
+
+	orect := s.orig.Bounds()
+	oi := image.NewNRGBA(orect)
+	for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
+		// zero based coord
+		zy := iy - orect.Min.Y
+		for ix := orect.Min.X; ix < orect.Max.X; ix++ {
+			zx := ix - orect.Min.X
+			sx, sy := origToScanned.transform(zx, zy)
+			//v := uint8((ix + iy) & 0x0ff)
+			v := it.Y[(sy*it.YStride)+sx]
+			pi := (zy * oi.Stride) + (zx * 4)
+			oi.Pix[pi] = v      // R
+			oi.Pix[pi+1] = v    // G
+			oi.Pix[pi+2] = v    // B
+			oi.Pix[pi+3] = 0xff // A
+		}
+	}
+	imoutpath := "/tmp/oi.png"
+	imout, err := os.Create(imoutpath)
+	if err != nil {
+		return fmt.Errorf("%s: %s", imoutpath, err)
+	}
+	defer imout.Close()
+	err = png.Encode(imout, oi)
+	return err
 }
 
 type DrawSettings struct {
