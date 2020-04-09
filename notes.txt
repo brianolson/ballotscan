@@ -1,0 +1,12 @@
+https://en.wikipedia.org/wiki/Distance_from_a_point_to_a_line
+
+ax + by + c = 0
+(x0, y0)
+
+abs(a*x0 + b*y0 + c)/sqrt(a*a + b*b)
+
+
+y = slope*x + intercept
+a = slope
+b = -1
+c = intercept
