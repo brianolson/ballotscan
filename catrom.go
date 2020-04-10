@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -29,6 +30,10 @@ type frgba struct {
 	r, g, b, a float64
 }
 
+func (x frgba) String() string {
+	return fmt.Sprintf("(%.4f,%.4f,%.4f,%.4f)", x.r, x.g, x.b, x.a)
+}
+
 func fclamp(x, min, max float64) float64 {
 	if x < min {
 		return min
@@ -38,6 +43,8 @@ func fclamp(x, min, max float64) float64 {
 	}
 	return x
 }
+
+var dblimit = 10
 
 func ImageBiCatrom(im image.Image, x, y float64) color.RGBA {
 	bound := im.Bounds()
@@ -69,6 +76,12 @@ func ImageBiCatrom(im image.Image, x, y float64) color.RGBA {
 		}
 	}
 
+	// fmt.Printf("x=%.4f %s %s %s %s\n", x, xpoints[0], xpoints[1], xpoints[2], xpoints[3])
+	// dblimit--
+	// if dblimit <= 0 {
+	// 	os.Exit(1)
+	// }
+
 	// second interpolate along vertical line at x to point at y
 	catromWeights(y-fyf, xw[:])
 	outf := frgba{0, 0, 0, 0}
@@ -78,9 +91,9 @@ func ImageBiCatrom(im image.Image, x, y float64) color.RGBA {
 		outf.b += xpoints[i].b * xw[i]
 		outf.a += xpoints[i].a * xw[i]
 	}
-	outf.a = fclamp(outf.a, 0, 255)
-	outf.r = fclamp(outf.r, 0, outf.a)
-	outf.g = fclamp(outf.g, 0, outf.a)
-	outf.b = fclamp(outf.b, 0, outf.a)
+	outf.a = fclamp(outf.a/255.0, 0, 255)
+	outf.r = fclamp(outf.r/255.0, 0, outf.a)
+	outf.g = fclamp(outf.g/255.0, 0, outf.a)
+	outf.b = fclamp(outf.b/255.0, 0, outf.a)
 	return color.RGBA{uint8(outf.r), uint8(outf.g), uint8(outf.b), uint8(outf.a)}
 }

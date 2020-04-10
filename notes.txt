@@ -10,3 +10,14 @@ y = slope*x + intercept
 a = slope
 b = -1
 c = intercept
+
+
+Shopping around for document scanners in the range of about $1000 has daily suggested scan volume around 7000-10000.
+At 60 page-per-minute they could blow through that in 2-3 hours of operating at peak speed.
+Let's pretend we can do 20ppm aggregate speed per machine with shuffling stacks of ballots so as to count each precinct separately (counting will be recognized by barcode on ballot serializing each ballot to a precinct/ballot-style, but organizationally people will probably want to keep those stacks separate).
+
+20ppm = 1200 page-per-hour
+That will hit machine recommended daily capacity in an 8 hour day.
+But let's say these machines are new or barely used outside of bursty election usage, so run them non-stop.
+29,000 pages per day per $1000 machine + (24 * $30 = $360) minimum wage labor shuffling paper into the machines
+$.05 per ballot counted in a 24-hour count

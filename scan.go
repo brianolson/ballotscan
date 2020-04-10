@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -227,6 +228,21 @@ func (t transform) transform(origx, origy int) (x, y int) {
 	return
 }
 
+func (t transform) transformF(origx, origy float64) (x, y float64) {
+	// TODO: compose this into a transform matrix
+	dx := origx - float64(t.orig.x)
+	dy := origy - float64(t.orig.y)
+	nx := float64(dx) * t.scale
+	ny := float64(dy) * t.scale
+
+	x2 := (nx * t.costh) - (ny * t.sinth)
+	y2 := (nx * t.sinth) + (ny * t.costh)
+
+	x = x2 + float64(t.dest.x)
+	y = y2 + float64(t.dest.y)
+	return
+}
+
 type Scanner struct {
 	bj BubblesJson
 
@@ -323,6 +339,13 @@ func (s *Scanner) pointOrigToScanned(origx, origy int, topLeft, topRight point) 
 	return
 }
 
+func fmax(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
 		return fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
@@ -417,6 +440,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeft.x, topLeft.y, topRight.x, topRight.y)
 
 	origToScanned := newTransform(s.origTopLeft, s.origTopRight, topLeft, topRight)
+
 	// TODO: compase a 2d transformation matrix
 	// translate(-topLeftX, -topLeftY)
 	// rotate(-rotRads)
@@ -431,27 +455,84 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	// scale := actualTopLineLengthPx / origTopLineLength
 	// fmt.Printf("rotate %f radians, scale %f\n", rotRads, scale)
 
-	orect := s.orig.Bounds()
-	oi := image.NewNRGBA(orect)
-	for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
-		// zero based coord
-		zy := iy - orect.Min.Y
-		for ix := orect.Min.X; ix < orect.Max.X; ix++ {
-			zx := ix - orect.Min.X
-			sx, sy := origToScanned.transform(zx, zy)
-			//v := uint8((ix + iy) & 0x0ff)
-			v := it.Y[(sy*it.YStride)+sx]
-			pi := (zy * oi.Stride) + (zx * 4)
-			oi.Pix[pi] = v      // R
-			oi.Pix[pi+1] = v    // G
-			oi.Pix[pi+2] = v    // B
-			oi.Pix[pi+3] = 0xff // A
+	sourceSelectionBounds := make([][]float64, 0, 100)
+	maxWidth := 0.0
+	maxHeight := 0.0
+	for _, ballotType := range s.bj.Bubbles {
+		for _, csels := range ballotType { // _ = contestName
+			for _, xywh := range csels { // _ = cselName
+				sourceSelectionBounds = append(sourceSelectionBounds, xywh)
+				maxWidth = fmax(maxWidth, xywh[2])
+				maxHeight = fmax(maxHeight, xywh[3])
+			}
 		}
 	}
-	imoutpath := "/tmp/oi.png"
-	imout, err := os.Create(imoutpath)
+	maxWidth = math.Ceil(maxWidth * s.origPxPerPt)
+	maxHeight = math.Ceil(maxHeight * s.origPxPerPt)
+	oiw := int(maxWidth) * 4
+	oih := int(maxHeight) * 4 * len(sourceSelectionBounds)
+	orect := image.Rect(0, 0, oiw, oih)
+	oi := image.NewNRGBA(orect)
+	opngBounds := s.orig.Bounds()
+	for i, xywh := range sourceSelectionBounds {
+		// (printx,printy) coord in pt from bottom left
+		printx := xywh[0]
+		printy := xywh[1]
+		// coords in orig png, bottom left pixel
+		opngx := printx * s.origPxPerPt
+		opngy := float64(opngBounds.Max.Y) - (printy * s.origPxPerPt)
+
+		outy := (int(maxHeight) * 4 * (i + 1)) - 1
+		outWidthPx := int(math.Ceil(xywh[2] * 4 * s.origPxPerPt))
+		outHeightPx := int(math.Ceil(xywh[3] * 4 * s.origPxPerPt))
+		for iy := 0; iy < outHeightPx; iy++ {
+			dy := opngy - (float64(iy) * 0.25)
+			for ix := 0; ix < outWidthPx; ix++ {
+				//for dy := 0.0; dy < xywh[3]; dy += 0.25 {
+				//for dx := 0.0; dx < xywh[2]; dx += 0.25 {
+				pi := ((outy - iy) * oi.Stride) + (ix * 4)
+				dx := opngx + (float64(ix) * 0.25)
+				sx, sy := origToScanned.transformF(dx, dy)
+				oc := ImageBiCatrom(it, sx, sy)
+				//oc := ImageBiCatrom(s.orig, dx, dy)
+				oi.Pix[pi] = oc.R
+				oi.Pix[pi+1] = oc.G
+				oi.Pix[pi+2] = oc.B
+				oi.Pix[pi+3] = oc.A
+			}
+		}
+	}
+
+	// orect := s.orig.Bounds()
+	// oi := image.NewNRGBA(orect)
+	// for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
+	// 	// zero based coord
+	// 	zy := iy - orect.Min.Y
+	// 	for ix := orect.Min.X; ix < orect.Max.X; ix++ {
+	// 		zx := ix - orect.Min.X
+	// 		//v := uint8((ix + iy) & 0x0ff)
+	// 		pi := (zy * oi.Stride) + (zx * 4)
+	// 		if true {
+	// 			sx, sy := origToScanned.transformF(float64(zx), float64(zy))
+	// 			oc := ImageBiCatrom(it, sx, sy)
+	// 			oi.Pix[pi] = oc.R
+	// 			oi.Pix[pi+1] = oc.G
+	// 			oi.Pix[pi+2] = oc.B
+	// 			oi.Pix[pi+3] = oc.A
+	// 		} else {
+	// 			sx, sy := origToScanned.transform(zx, zy)
+	// 			v := it.Y[(sy*it.YStride)+sx]
+	// 			oi.Pix[pi] = v      // R
+	// 			oi.Pix[pi+1] = v    // G
+	// 			oi.Pix[pi+2] = v    // B
+	// 			oi.Pix[pi+3] = 0xff // A
+	// 		}
+	// 	}
+	// }
+	//imoutpath := "/tmp/oi.png"
+	imout, err := os.Create(debugPngPath)
 	if err != nil {
-		return fmt.Errorf("%s: %s", imoutpath, err)
+		return fmt.Errorf("%s: %s", debugPngPath, err)
 	}
 	defer imout.Close()
 	err = png.Encode(imout, oi)
@@ -464,11 +545,19 @@ type DrawSettings struct {
 	// TODO: lots of fields ignored
 }
 
+// {"csel1": [44.2, 491.4000000000001, 22.67716535433071, 8.255859375], "csel2": [44.2, 458.2000000000001, 22.67716535433071, 8.255859375]}
+// []float64 is length 4, [x,y, width,height]
+type ContestSelections map[string][]float64
+type Contest map[string]ContestSelections
+
 type BubblesJson struct {
-	DrawSettings *DrawSettings            `json:"draw_settings"`
-	Bubbles      []map[string]interface{} `json:"bubbles"`
+	DrawSettings *DrawSettings `json:"draw_settings"`
+
+	// Bubbles is a list per ballot style, indexed in the same order as the source document ballot styles.
+	Bubbles []Contest `json:"bubbles"`
 }
 
+/*
 func readBubbles(path string) (out *BubblesJson, err error) {
 	fin, err := os.Open(path)
 	if err != nil {
@@ -482,24 +571,38 @@ func readBubbles(path string) (out *BubblesJson, err error) {
 	//out = &xo
 	return
 }
+*/
+
+var (
+	bubbleJsonPath string
+	origPngPath    string
+	debugPngPath   string
+	scanImgPath    string
+)
 
 func main() {
+	flag.StringVar(&bubbleJsonPath, "bubbles", "", "bubbles.json")
+	flag.StringVar(&origPngPath, "orig", "", "orig png")
+	flag.StringVar(&debugPngPath, "dbpng", "", "debug png out")
+	flag.StringVar(&scanImgPath, "scan", "", "scan img in")
+	flag.Parse()
 	var err error
 	var s Scanner
-	bfname := "resources/testdata/20200403/bubbles.json"
+	//bfname := bubbleJsonPath // "resources/testdata/20200403/bubbles.json"
 	//ob, err := readBubbles(bfname)
-	err = s.readBubblesJson(bfname)
-	maybeFail(err, "%s: %s", bfname, err)
+	err = s.readBubblesJson(bubbleJsonPath)
+	maybeFail(err, "%s: %s", bubbleJsonPath, err)
 	fmt.Printf("ds %#v\n", s.bj.DrawSettings)
-	origname := "resources/testdata/20200330/a.png"
-	err = s.readOrigImage(origname)
-	maybeFail(err, "%s: %s\n", origname, err)
+	fmt.Printf("ds %#v\n", s.bj.Bubbles)
+	//origname := "resources/testdata/20200330/a.png"
+	err = s.readOrigImage(origPngPath)
+	maybeFail(err, "%s: %s\n", origPngPath, err)
 	// ohist := generalBrightnessHistogram(orig)
 	// for i, v := range ohist {
 	// 	fmt.Printf("hist[%3d] %6d\n", i, v)
 	// }
 	// os.Exit(0)
-	fname := "resources/testdata/20200330/scan_20200330_102310_1.jpg"
-	err = s.readScannedImage(fname)
-	maybeFail(err, "%s: %s\n", fname, err)
+	//fname := "resources/testdata/20200330/scan_20200330_102310_1.jpg"
+	err = s.readScannedImage(scanImgPath)
+	maybeFail(err, "%s: %s\n", scanImgPath, err)
 }
