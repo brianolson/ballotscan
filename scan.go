@@ -193,6 +193,7 @@ type transform struct {
 }
 
 func newTransform(origTopLeft, origTopRight, destTopLeft, destTopRight point) transform {
+	// TODO: compase a 2d transformation matrix
 	dy := destTopRight.y - destTopLeft.y
 	dx := destTopRight.x - destTopLeft.x
 	rotRads := math.Atan2(float64(dy), float64(dx))
@@ -250,6 +251,11 @@ type Scanner struct {
 	origPxPerPt  float64
 	origTopLeft  point
 	origTopRight point
+
+	hist       []uint
+	scanThresh uint8
+
+	origToScanned transform
 }
 
 func (s *Scanner) readBubblesJson(path string) error {
@@ -292,6 +298,11 @@ func (s *Scanner) readOrigImage(origname string) error {
 	return nil
 }
 
+func (s *Scanner) findOrigImageHotspots() error {
+	// TODO: find ~20 spots 16x16 px with dx feature and dy feature
+	return nil
+}
+
 func (s *Scanner) readScannedImage(fname string) error {
 	r, err := os.Open(fname)
 	if err != nil {
@@ -311,34 +322,6 @@ func (s *Scanner) readScannedImage(fname string) error {
 	}
 }
 
-// For some (x,y) point in the original image, return (x,y) in the scanned image
-func (s *Scanner) pointOrigToScanned(origx, origy int, topLeft, topRight point) (x, y int, err error) {
-	dy := topRight.y - topLeft.y
-	dx := topRight.x - topLeft.x
-	rotRads := math.Atan2(float64(dy), float64(dx))
-	actualTopLineLengthPx := math.Sqrt(float64((dx * dx) + (dy * dy)))
-	ody := s.origTopRight.y - s.origTopLeft.y
-	odx := s.origTopRight.x - s.origTopLeft.x
-	origTopLineLength := math.Sqrt(float64((odx * odx) + (ody * ody)))
-	scale := actualTopLineLengthPx / origTopLineLength
-	fmt.Printf("rotate %f radians, scale %f\n", rotRads, scale)
-
-	// x,y in orig frame
-	x = origx - s.origTopLeft.x
-	y = origy - s.origTopLeft.y
-	nx := float64(x) * scale
-	ny := float64(y) * scale
-
-	costh := math.Cos(rotRads)
-	sinth := math.Sin(rotRads)
-	x2 := (nx * costh) - (ny * sinth)
-	y2 := (nx * sinth) + (ny * costh)
-
-	x = int(x2) + topLeft.x
-	y = int(y2) + topLeft.y
-	return
-}
-
 func fmax(a, b float64) float64 {
 	if a > b {
 		return a
@@ -346,46 +329,12 @@ func fmax(a, b float64) float64 {
 	return b
 }
 
-func (s *Scanner) processYCbCr(it *image.YCbCr) error {
-	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
-		return fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
-	}
-	fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
-	// pxy(it, 0, 0)
-	// pxy(it, 1, 0)
-	// pxy(it, 2, 0)
-	// pxy(it, 0, 1)
-	// pxy(it, 0, 2)
-	// pxy(it, 50, 50)
-	// pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
-	//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
-	//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
-
-	hist := yHistogram(it)
-	threshold := otsuThreshold(hist)
-	fmt.Printf("Otsu threshold %d\n", threshold)
-	if false {
-		for i, v := range hist {
-			fmt.Printf("hist[%3d] %6d\n", i, v)
-		}
-	}
+func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 	misscount := 0
 	hitcount := 0
-	for y := 100; y < it.Rect.Max.Y-100; y += 50 {
-		xle := yLeftLineFind(it, y, threshold)
-		if xle < it.Rect.Max.X/2 {
-			//fmt.Printf("[%d,%d]\n", xle, y)
-			hitcount++
-		} else {
-			misscount++
-		}
-	}
-	fmt.Printf("left line %d hit %d miss\n", hitcount, misscount)
-	misscount = 0
-	hitcount = 0
 	topPoints := make([]point, 0, 100)
 	for x := 100; x < it.Rect.Max.X-100; x += 50 {
-		yte := yTopLineFind(it, x, threshold)
+		yte := yTopLineFind(it, x, s.scanThresh)
 		if yte < it.Rect.Max.Y/2 {
 			//fmt.Printf("[%d,%d]\n", x, yte)
 			topPoints = append(topPoints, point{x, yte})
@@ -410,7 +359,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	const step = 5
 	for true {
 		nx := x - step
-		yte := yTopLineFind(it, nx, threshold)
+		yte := yTopLineFind(it, nx, s.scanThresh)
 		d := pointLineDistance(slope, intercept, nx, yte)
 		if d > worstd {
 			break
@@ -426,7 +375,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	y = topPoints[last].y
 	for true {
 		nx := x + step
-		yte := yTopLineFind(it, nx, threshold)
+		yte := yTopLineFind(it, nx, s.scanThresh)
 		d := pointLineDistance(slope, intercept, nx, yte)
 		if d > worstd {
 			break
@@ -439,9 +388,53 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	topRight := point{x, y}
 	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeft.x, topLeft.y, topRight.x, topRight.y)
 
-	origToScanned := newTransform(s.origTopLeft, s.origTopRight, topLeft, topRight)
+	s.origToScanned = newTransform(s.origTopLeft, s.origTopRight, topLeft, topRight)
+	// TODO: detect if we failed to detect a reasonable top line and return error
+	return nil
+}
 
-	// TODO: compase a 2d transformation matrix
+func (s *Scanner) processYCbCr(it *image.YCbCr) error {
+	var err error
+	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
+		return fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
+	}
+	fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
+	// pxy(it, 0, 0)
+	// pxy(it, 1, 0)
+	// pxy(it, 2, 0)
+	// pxy(it, 0, 1)
+	// pxy(it, 0, 2)
+	// pxy(it, 50, 50)
+	// pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
+	//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
+	//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
+
+	s.hist = yHistogram(it)
+	s.scanThresh = otsuThreshold(s.hist)
+	fmt.Printf("Otsu threshold %d\n", s.scanThresh)
+	if false {
+		for i, v := range s.hist {
+			fmt.Printf("hist[%3d] %6d\n", i, v)
+		}
+	}
+	misscount := 0
+	hitcount := 0
+	for y := 100; y < it.Rect.Max.Y-100; y += 50 {
+		xle := yLeftLineFind(it, y, s.scanThresh)
+		if xle < it.Rect.Max.X/2 {
+			//fmt.Printf("[%d,%d]\n", xle, y)
+			hitcount++
+		} else {
+			misscount++
+		}
+	}
+	fmt.Printf("left line %d hit %d miss\n", hitcount, misscount)
+
+	err = s.topLineYCbCr(it)
+	if err != nil {
+		return err
+	}
+
 	// translate(-topLeftX, -topLeftY)
 	// rotate(-rotRads)
 	// scale
@@ -492,7 +485,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 				//for dx := 0.0; dx < xywh[2]; dx += 0.25 {
 				pi := ((outy - iy) * oi.Stride) + (ix * 4)
 				dx := opngx + (float64(ix) * 0.25)
-				sx, sy := origToScanned.transformF(dx, dy)
+				sx, sy := s.origToScanned.transformF(dx, dy)
 				oc := ImageBiCatrom(it, sx, sy)
 				//oc := ImageBiCatrom(s.orig, dx, dy)
 				oi.Pix[pi] = oc.R
