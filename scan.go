@@ -393,6 +393,36 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 	return nil
 }
 
+func (s *Scanner) translateWholeScanToOrig(it *image.YCbCr) (dboi image.Image, err error) {
+	orect := s.orig.Bounds()
+	oi := image.NewNRGBA(orect)
+	for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
+		// zero based coord
+		zy := iy - orect.Min.Y
+		for ix := orect.Min.X; ix < orect.Max.X; ix++ {
+			zx := ix - orect.Min.X
+			//v := uint8((ix + iy) & 0x0ff)
+			pi := (zy * oi.Stride) + (zx * 4)
+			if true {
+				sx, sy := s.origToScanned.transformF(float64(zx), float64(zy))
+				oc := ImageBiCatrom(it, sx, sy)
+				oi.Pix[pi] = oc.R
+				oi.Pix[pi+1] = oc.G
+				oi.Pix[pi+2] = oc.B
+				oi.Pix[pi+3] = oc.A
+			} else {
+				sx, sy := s.origToScanned.transform(zx, zy)
+				v := it.Y[(sy*it.YStride)+sx]
+				oi.Pix[pi] = v      // R
+				oi.Pix[pi+1] = v    // G
+				oi.Pix[pi+2] = v    // B
+				oi.Pix[pi+3] = 0xff // A
+			}
+		}
+	}
+	return oi, nil
+}
+
 func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	var err error
 	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
@@ -496,32 +526,6 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 		}
 	}
 
-	// orect := s.orig.Bounds()
-	// oi := image.NewNRGBA(orect)
-	// for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
-	// 	// zero based coord
-	// 	zy := iy - orect.Min.Y
-	// 	for ix := orect.Min.X; ix < orect.Max.X; ix++ {
-	// 		zx := ix - orect.Min.X
-	// 		//v := uint8((ix + iy) & 0x0ff)
-	// 		pi := (zy * oi.Stride) + (zx * 4)
-	// 		if true {
-	// 			sx, sy := origToScanned.transformF(float64(zx), float64(zy))
-	// 			oc := ImageBiCatrom(it, sx, sy)
-	// 			oi.Pix[pi] = oc.R
-	// 			oi.Pix[pi+1] = oc.G
-	// 			oi.Pix[pi+2] = oc.B
-	// 			oi.Pix[pi+3] = oc.A
-	// 		} else {
-	// 			sx, sy := origToScanned.transform(zx, zy)
-	// 			v := it.Y[(sy*it.YStride)+sx]
-	// 			oi.Pix[pi] = v      // R
-	// 			oi.Pix[pi+1] = v    // G
-	// 			oi.Pix[pi+2] = v    // B
-	// 			oi.Pix[pi+3] = 0xff // A
-	// 		}
-	// 	}
-	// }
 	//imoutpath := "/tmp/oi.png"
 	imout, err := os.Create(debugPngPath)
 	if err != nil {
