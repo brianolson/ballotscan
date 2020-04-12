@@ -348,12 +348,10 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 	worstd := 0.0
 	for _, pt := range topPoints {
 		d := pointLineDistance(slope, intercept, pt.x, pt.y)
-		//fmt.Printf(" %0.2f", d)
 		if d > worstd {
 			worstd = d
 		}
 	}
-	//fmt.Printf("\n")
 	x := topPoints[0].x
 	y := topPoints[0].y
 	const step = 5
@@ -368,8 +366,6 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 		y = yte
 	}
 	topLeft := point{x, y}
-	//topLeftX := x
-	//topLeftY := y
 	last := len(topPoints) - 1
 	x = topPoints[last].x
 	y = topPoints[last].y
@@ -383,8 +379,6 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 		x = nx
 		y = yte
 	}
-	//topRightX := x
-	//topRightY := y
 	topRight := point{x, y}
 	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeft.x, topLeft.y, topRight.x, topRight.y)
 
@@ -465,19 +459,6 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 		return err
 	}
 
-	// translate(-topLeftX, -topLeftY)
-	// rotate(-rotRads)
-	// scale
-	// dy := topRightY - topLeftY
-	// dx := topRightX - topLeftX
-	// rotRads := math.Atan2(float64(dy), float64(dx))
-	// actualTopLineLengthPx := math.Sqrt(float64((dx * dx) + (dy * dy)))
-	// ody := s.origTopRight.y - s.origTopLeft.y
-	// odx := s.origTopRight.x - s.origTopLeft.x
-	// origTopLineLength := math.Sqrt(float64((odx * odx) + (ody * ody)))
-	// scale := actualTopLineLengthPx / origTopLineLength
-	// fmt.Printf("rotate %f radians, scale %f\n", rotRads, scale)
-
 	sourceSelectionBounds := make([][]float64, 0, 100)
 	maxWidth := 0.0
 	maxHeight := 0.0
@@ -553,22 +534,6 @@ type BubblesJson struct {
 	// Bubbles is a list per ballot style, indexed in the same order as the source document ballot styles.
 	Bubbles []Contest `json:"bubbles"`
 }
-
-/*
-func readBubbles(path string) (out *BubblesJson, err error) {
-	fin, err := os.Open(path)
-	if err != nil {
-		return
-	}
-	out = new(BubblesJson)
-	//var xo bubblesJson
-	jd := json.NewDecoder(fin)
-	err = jd.Decode(out)
-	fin.Close()
-	//out = &xo
-	return
-}
-*/
 
 var (
 	bubbleJsonPath string
