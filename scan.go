@@ -10,6 +10,7 @@ import (
 	"image/png"
 	_ "image/png"
 	"math"
+	"math/rand"
 	"os"
 )
 
@@ -244,6 +245,16 @@ func (t transform) transformF(origx, origy float64) (x, y float64) {
 	return
 }
 
+func colorY(c color.Color) uint8 {
+	r, g, b, a := c.RGBA()
+	sa := a >> 8
+	br := uint8(r / sa)
+	bg := uint8(g / sa)
+	bb := uint8(b / sa)
+	y, _, _ := color.RGBToYCbCr(br, bg, bb)
+	return y
+}
+
 type Scanner struct {
 	bj BubblesJson
 
@@ -251,6 +262,7 @@ type Scanner struct {
 	origPxPerPt  float64
 	origTopLeft  point
 	origTopRight point
+	origYThresh  uint8
 
 	hist       []uint
 	scanThresh uint8
@@ -295,12 +307,151 @@ func (s *Scanner) readOrigImage(origname string) error {
 		y: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
 	}
 	fmt.Printf("top line orig (%d,%d)-(%d,%d)\n", s.origTopLeft.x, s.origTopLeft.y, s.origTopRight.x, s.origTopRight.y)
+
+	var hist [256]uint
+	for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
+		for ix := orect.Min.X; ix < orect.Max.X; ix++ {
+			y := colorY(orig.At(ix, iy))
+			hist[y]++
+		}
+	}
+	s.origYThresh = otsuThreshold(hist[:])
 	return nil
 }
 
-func (s *Scanner) findOrigImageHotspots() error {
-	// TODO: find ~20 spots 16x16 px with dx feature and dy feature
-	return nil
+const hotspotSize = 15
+
+func (s *Scanner) origImageHotspotsQuality(tx, ty int, scratch []uint8) int {
+	// scratch should be [hotspotSize*hotspotSize]bool
+
+	mx := tx - (hotspotSize / 2)
+	my := ty - (hotspotSize / 2)
+	for iy := 0; iy < hotspotSize; iy++ {
+		for ix := 0; ix < hotspotSize; ix++ {
+			y := colorY(s.orig.At(mx+ix, my+iy))
+			if y >= s.origYThresh {
+				scratch[(hotspotSize*iy)+ix] = 1
+			} else {
+				scratch[(hotspotSize*iy)+ix] = 0
+			}
+		}
+	}
+	dx := 0
+	for iy := 0; iy < hotspotSize; iy++ {
+		yo := iy * hotspotSize
+		for ix := 0; ix < hotspotSize-6; ix++ {
+			if (scratch[yo+ix] == scratch[yo+ix+1]) && (scratch[yo+ix] == scratch[yo+ix+2]) && (scratch[yo+ix] != scratch[yo+ix+3]) && (scratch[yo+ix] != scratch[yo+ix+4]) && (scratch[yo+ix] != scratch[yo+ix+5]) {
+				dx++
+			}
+		}
+	}
+	dy := 0
+	for iy := 0; iy < hotspotSize-6; iy++ {
+		y0 := iy * hotspotSize
+		y1 := (iy + 1) * hotspotSize
+		y2 := (iy + 2) * hotspotSize
+		y3 := (iy + 3) * hotspotSize
+		y4 := (iy + 4) * hotspotSize
+		y5 := (iy + 5) * hotspotSize
+		for ix := 0; ix < hotspotSize; ix++ {
+			if (scratch[y0+ix] == scratch[y1+ix]) && (scratch[y0+ix] == scratch[y2+ix]) && (scratch[y0+ix] != scratch[y3+ix]) && (scratch[y0+ix] != scratch[y4+ix]) && (scratch[y0+ix] != scratch[y5+ix]) {
+				dy++
+			}
+		}
+	}
+	fx := float64(dx)
+	fx = (math.Log10(fx*0.5) + 0.5) * fx
+	fy := float64(dy)
+	fy = (math.Log10(fy*0.5) + 0.5) * fy
+	return int(fx + fy)
+}
+
+const nHotspots = 20
+
+func (s *Scanner) findOrigImageHotspots() []point {
+	// find ~20 spots 16x16 px with dx feature and dy feature
+	orect := s.orig.Bounds()
+
+	width := orect.Max.X - orect.Min.X
+	height := orect.Max.Y - orect.Min.Y
+
+	spots := make([]point, 0, nHotspots)
+	//scores := make([]int, 0, nHotspots)
+	//scratch := make([]uint8, hotspotSize*hotspotSize)
+	var scores [nHotspots]int
+	var scratch [hotspotSize * hotspotSize]uint8
+	// check 5x what we want, keep the best
+	checkCount := 0
+	for checkCount < nHotspots*5 {
+		tx := rand.Intn(width-(2*hotspotSize)) + hotspotSize
+		ty := rand.Intn(height-(2*hotspotSize)) + hotspotSize
+		score := s.origImageHotspotsQuality(tx, ty, scratch[:])
+		if score < 0 {
+			//fmt.Printf("h [%d,%d] not hot\n", tx, ty)
+			continue
+		}
+		if len(spots) == 0 {
+			spots = append(spots, point{tx, ty})
+			//scores = append(scores, score)
+			scores[0] = score
+			//fmt.Printf("h [%d,%d] %d first post, %v\n", tx, ty, score, scores)
+			continue
+		}
+		pos := len(spots) - 1
+		for score > scores[pos] {
+			// insertion sort
+			if pos < nHotspots {
+				if (pos + 1) < len(spots) {
+					scores[pos+1] = scores[pos]
+					spots[pos+1] = spots[pos]
+				} else if (pos + 1) < nHotspots {
+					//scores = append(scores, scores[pos])
+					scores[pos+1] = scores[pos]
+					spots = append(spots, spots[pos])
+				}
+			}
+			spots[pos].x = tx
+			spots[pos].y = ty
+			scores[pos] = score
+			if pos == 0 {
+				break
+			}
+			pos--
+		}
+		if pos+1 < nHotspots {
+			if (pos + 1) < len(spots) {
+				scores[pos+1] = score
+				spots[pos+1].x = tx
+				spots[pos+1].y = ty
+			} else {
+				//scores = append(scores, scores[pos])
+				scores[pos+1] = score
+				spots = append(spots, point{tx, ty})
+			}
+		}
+		checkCount++
+	}
+	return spots
+}
+
+// copy source data in hotspots to image so we can see what targets we're picking
+func (s *Scanner) hotspotsDebugImage(spots []point) image.Image {
+	width := hotspotSize
+	height := hotspotSize * len(spots)
+	fmt.Printf("hots %dx%d\n", width, height)
+	outrect := image.Rect(0, 0, width, height)
+	out := image.NewRGBA(outrect)
+	for i, spt := range spots {
+		mx := spt.x - (hotspotSize / 2)
+		my := spt.y - (hotspotSize / 2)
+		for iy := 0; iy < hotspotSize; iy++ {
+			for ix := 0; ix < hotspotSize; ix++ {
+				sc := s.orig.At(mx+ix, my+iy)
+				out.Set(ix, iy+(i*hotspotSize), sc)
+			}
+		}
+	}
+	return out
 }
 
 func (s *Scanner) readScannedImage(fname string) error {
@@ -559,6 +710,17 @@ func main() {
 	//origname := "resources/testdata/20200330/a.png"
 	err = s.readOrigImage(origPngPath)
 	maybeFail(err, "%s: %s\n", origPngPath, err)
+	if debugPngPath != "" {
+		spots := s.findOrigImageHotspots()
+		oi := s.hotspotsDebugImage(spots)
+		imout, err := os.Create(debugPngPath)
+		maybeFail(err, "%s: %s\n", debugPngPath, err)
+		defer imout.Close()
+		err = png.Encode(imout, oi)
+		maybeFail(err, "%s: %s\n", debugPngPath, err)
+		return
+	}
+
 	// ohist := generalBrightnessHistogram(orig)
 	// for i, v := range ohist {
 	// 	fmt.Printf("hist[%3d] %6d\n", i, v)
