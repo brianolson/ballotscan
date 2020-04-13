@@ -464,7 +464,6 @@ func (s *Scanner) readScannedImage(fname string) error {
 	if err != nil {
 		return err
 	}
-	//fmt.Printf("im %s %T %v\n", format, im, im.Bounds())
 	switch it := im.(type) {
 	case *image.YCbCr:
 		return s.processYCbCr(it)
@@ -609,7 +608,13 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	if err != nil {
 		return err
 	}
+	if bubblesPngPath != "" {
+		err = s.debugScannedBubbles(it)
+	}
+	return err
+}
 
+func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 	sourceSelectionBounds := make([][]float64, 0, 100)
 	maxWidth := 0.0
 	maxHeight := 0.0
@@ -658,10 +663,9 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 		}
 	}
 
-	//imoutpath := "/tmp/oi.png"
-	imout, err := os.Create(debugPngPath)
+	imout, err := os.Create(bubblesPngPath)
 	if err != nil {
-		return fmt.Errorf("%s: %s", debugPngPath, err)
+		return fmt.Errorf("%s: %s", bubblesPngPath, err)
 	}
 	defer imout.Close()
 	err = png.Encode(imout, oi)
@@ -689,6 +693,8 @@ type BubblesJson struct {
 var (
 	bubbleJsonPath string
 	origPngPath    string
+	targetsPngPath string // debug png with sync targets
+	bubblesPngPath string // debug png with bubbles from source
 	debugPngPath   string
 	scanImgPath    string
 )
@@ -697,36 +703,28 @@ func main() {
 	flag.StringVar(&bubbleJsonPath, "bubbles", "", "bubbles.json")
 	flag.StringVar(&origPngPath, "orig", "", "orig png")
 	flag.StringVar(&debugPngPath, "dbpng", "", "debug png out")
+	flag.StringVar(&bubblesPngPath, "bubpng", "", "debug bubbles png out")
+	flag.StringVar(&targetsPngPath, "targets", "", "debug targets png out")
 	flag.StringVar(&scanImgPath, "scan", "", "scan img in")
 	flag.Parse()
 	var err error
 	var s Scanner
-	//bfname := bubbleJsonPath // "resources/testdata/20200403/bubbles.json"
-	//ob, err := readBubbles(bfname)
 	err = s.readBubblesJson(bubbleJsonPath)
 	maybeFail(err, "%s: %s", bubbleJsonPath, err)
 	fmt.Printf("ds %#v\n", s.bj.DrawSettings)
 	fmt.Printf("ds %#v\n", s.bj.Bubbles)
-	//origname := "resources/testdata/20200330/a.png"
 	err = s.readOrigImage(origPngPath)
 	maybeFail(err, "%s: %s\n", origPngPath, err)
-	if debugPngPath != "" {
+	if targetsPngPath != "" {
 		spots := s.findOrigImageHotspots()
 		oi := s.hotspotsDebugImage(spots)
-		imout, err := os.Create(debugPngPath)
-		maybeFail(err, "%s: %s\n", debugPngPath, err)
+		imout, err := os.Create(targetsPngPath)
+		maybeFail(err, "%s: %s\n", targetsPngPath, err)
 		defer imout.Close()
 		err = png.Encode(imout, oi)
-		maybeFail(err, "%s: %s\n", debugPngPath, err)
-		return
+		maybeFail(err, "%s: %s\n", targetsPngPath, err)
 	}
 
-	// ohist := generalBrightnessHistogram(orig)
-	// for i, v := range ohist {
-	// 	fmt.Printf("hist[%3d] %6d\n", i, v)
-	// }
-	// os.Exit(0)
-	//fname := "resources/testdata/20200330/scan_20200330_102310_1.jpg"
 	err = s.readScannedImage(scanImgPath)
 	maybeFail(err, "%s: %s\n", scanImgPath, err)
 }
