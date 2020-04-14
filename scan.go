@@ -184,6 +184,37 @@ type point struct {
 	y int
 }
 
+type AffineTransform interface {
+	TransformInt(x, y int) (int, int)
+	Transform(x, y float64) (float64, float64)
+}
+
+type MatrixTransform struct {
+	mat []float64
+}
+
+func (mt MatrixTransform) TransformInt(x, y int) (int, int) {
+	fx := float64(x)
+	fy := float64(y)
+	ox := (fx * mt.mat[0]) + (fy * mt.mat[1]) + mt.mat[2]
+	oy := (fx * mt.mat[3]) + (fy * mt.mat[4]) + mt.mat[5]
+	ow := (fx * mt.mat[6]) + (fy * mt.mat[7]) + mt.mat[8]
+	ox /= ow
+	oy /= ow
+	return int(ox), int(oy)
+}
+
+func (mt MatrixTransform) Transform(x, y float64) (float64, float64) {
+	fx := x
+	fy := y
+	ox := (fx * mt.mat[0]) + (fy * mt.mat[1]) + mt.mat[2]
+	oy := (fx * mt.mat[3]) + (fy * mt.mat[4]) + mt.mat[5]
+	ow := (fx * mt.mat[6]) + (fy * mt.mat[7]) + mt.mat[8]
+	ox /= ow
+	oy /= ow
+	return ox, oy
+}
+
 type transform struct {
 	orig    point
 	scale   float64
@@ -215,7 +246,7 @@ func newTransform(origTopLeft, origTopRight, destTopLeft, destTopRight point) tr
 	}
 }
 
-func (t transform) transform(origx, origy int) (x, y int) {
+func (t transform) TransformInt(origx, origy int) (x, y int) {
 	// TODO: compose this into a transform matrix
 	x = origx - t.orig.x
 	y = origy - t.orig.y
@@ -230,7 +261,7 @@ func (t transform) transform(origx, origy int) (x, y int) {
 	return
 }
 
-func (t transform) transformF(origx, origy float64) (x, y float64) {
+func (t transform) Transform(origx, origy float64) (x, y float64) {
 	// TODO: compose this into a transform matrix
 	dx := origx - float64(t.orig.x)
 	dy := origy - float64(t.orig.y)
@@ -267,7 +298,7 @@ type Scanner struct {
 	hist       []uint
 	scanThresh uint8
 
-	origToScanned transform
+	origToScanned AffineTransform
 }
 
 func (s *Scanner) readBubblesJson(path string) error {
@@ -444,7 +475,7 @@ func (s *Scanner) hotspotsDebugImage(spots []point, it *image.YCbCr) *image.RGBA
 				out.Set(ix, iy+(i*hotspotSize), sc)
 
 				if it != nil {
-					sx, sy := s.origToScanned.transformF(float64(mx+ix), float64(my+iy))
+					sx, sy := s.origToScanned.Transform(float64(mx+ix), float64(my+iy))
 					sc = ImageBiCatrom(it, sx, sy)
 					out.Set(ix+hotspotSize, iy+(i*hotspotSize), sc)
 				}
@@ -545,6 +576,9 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 		debugi = s.hotspotsDebugImage(spots, it)
 	}
 
+	sources := make([]FPoint, len(spots))
+	dests := make([]FPoint, len(spots))
+
 	var scratch [hotspotSize * hotspotSize]uint8
 	for spoti, spot := range spots {
 		// copy thresholded orig to scratch
@@ -580,7 +614,7 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 					y := my + dy + iy
 					for ix := 0; ix < hotspotSize; ix++ {
 						x := mx + dx + ix
-						sx, sy := s.origToScanned.transformF(float64(x), float64(y))
+						sx, sy := s.origToScanned.Transform(float64(x), float64(y))
 						syv := YBiCatrom(it, sx, sy)
 						var stv uint8
 						if syv > s.scanThresh {
@@ -618,7 +652,7 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 				y := my + bestdy + iy
 				for ix := 0; ix < hotspotSize; ix++ {
 					x := mx + bestdx + ix
-					sx, sy := s.origToScanned.transformF(float64(x), float64(y))
+					sx, sy := s.origToScanned.Transform(float64(x), float64(y))
 					syv := YBiCatrom(it, sx, sy)
 					debugi.Set(ix+(hotspotSize*3), iy+(hotspotSize*spoti), color.Gray{syv})
 					//sc := ImageBiCatrom(it, sx, sy)
@@ -626,8 +660,13 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 				}
 			}
 		}
+		sources[spoti].SetInt(spot.x, spot.y)
+		dests[spoti].X, dests[spoti].Y = s.origToScanned.Transform(float64(spot.x+bestdx), float64(spot.y+bestdy))
 		// TODO: subpixel refinement
 	}
+	fmat := FindTransform(sources, dests)
+	fmt.Printf("transform %v\n", fmat)
+	s.origToScanned = &MatrixTransform{fmat}
 	if targetsPngPath != "" {
 		imout, err := os.Create(targetsPngPath)
 		maybeFail(err, "%s: %s\n", targetsPngPath, err)
@@ -649,18 +688,18 @@ func (s *Scanner) translateWholeScanToOrig(it *image.YCbCr) (dboi image.Image, e
 			//v := uint8((ix + iy) & 0x0ff)
 			pi := (zy * oi.Stride) + (zx * 4)
 			if true {
-				sx, sy := s.origToScanned.transformF(float64(zx), float64(zy))
+				sx, sy := s.origToScanned.Transform(float64(zx), float64(zy))
 				yv := YBiCatrom(it, sx, sy)
 				oi.Set(zx, zy, color.Gray{yv})
 			} else if true {
-				sx, sy := s.origToScanned.transformF(float64(zx), float64(zy))
+				sx, sy := s.origToScanned.Transform(float64(zx), float64(zy))
 				oc := ImageBiCatrom(it, sx, sy)
 				oi.Pix[pi] = oc.R
 				oi.Pix[pi+1] = oc.G
 				oi.Pix[pi+2] = oc.B
 				oi.Pix[pi+3] = oc.A
 			} else {
-				sx, sy := s.origToScanned.transform(zx, zy)
+				sx, sy := s.origToScanned.TransformInt(zx, zy)
 				v := it.Y[(sy*it.YStride)+sx]
 				oi.Pix[pi] = v      // R
 				oi.Pix[pi+1] = v    // G
@@ -713,6 +752,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	if err != nil {
 		return err
 	}
+	s.refineTransform(it)
 	if debugPngPath != "" {
 		dbimg, err := s.translateWholeScanToOrig(it)
 		if err != nil {
@@ -727,7 +767,6 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 			return err
 		}
 	}
-	s.refineTransform(it)
 	if bubblesPngPath != "" {
 		err = s.debugScannedBubbles(it)
 	}
@@ -772,7 +811,7 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 				//for dx := 0.0; dx < xywh[2]; dx += 0.25 {
 				pi := ((outy - iy) * oi.Stride) + (ix * 4)
 				dx := opngx + (float64(ix) * 0.25)
-				sx, sy := s.origToScanned.transformF(dx, dy)
+				sx, sy := s.origToScanned.Transform(dx, dy)
 				oc := ImageBiCatrom(it, sx, sy)
 				//oc := ImageBiCatrom(s.orig, dx, dy)
 				oi.Pix[pi] = oc.R

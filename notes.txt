@@ -21,3 +21,10 @@ That will hit machine recommended daily capacity in an 8 hour day.
 But let's say these machines are new or barely used outside of bursty election usage, so run them non-stop.
 29,000 pages per day per $1000 machine + (24 * $30 = $360) minimum wage labor shuffling paper into the machines
 $.05 per ballot counted in a 24-hour count
+
+
+2020-04-13 21:46:11 EDT (Monday, April 13 09:46:11 PM)
+
+http://www.cs.unc.edu/~lazebnik/research/spring08/lec10_alignment.pdf
+
+https://godoc.org/gonum.org/v1/gonum/mat
