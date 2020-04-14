@@ -321,6 +321,7 @@ func (s *Scanner) readOrigImage(origname string) error {
 
 const hotspotSize = 15
 
+// check potential hotspot center (tx,ty) for quality
 func (s *Scanner) origImageHotspotsQuality(tx, ty int, scratch []uint8) int {
 	// scratch should be [hotspotSize*hotspotSize]bool
 
@@ -368,6 +369,7 @@ func (s *Scanner) origImageHotspotsQuality(tx, ty int, scratch []uint8) int {
 
 const nHotspots = 20
 
+// returns hotspot center points [](x,y)
 func (s *Scanner) findOrigImageHotspots() []point {
 	// find ~20 spots 16x16 px with dx feature and dy feature
 	orect := s.orig.Bounds()
@@ -387,14 +389,12 @@ func (s *Scanner) findOrigImageHotspots() []point {
 		ty := rand.Intn(height-(2*hotspotSize)) + hotspotSize
 		score := s.origImageHotspotsQuality(tx, ty, scratch[:])
 		if score < 0 {
-			//fmt.Printf("h [%d,%d] not hot\n", tx, ty)
 			continue
 		}
 		if len(spots) == 0 {
 			spots = append(spots, point{tx, ty})
 			//scores = append(scores, score)
 			scores[0] = score
-			//fmt.Printf("h [%d,%d] %d first post, %v\n", tx, ty, score, scores)
 			continue
 		}
 		pos := len(spots) - 1
@@ -418,16 +418,10 @@ func (s *Scanner) findOrigImageHotspots() []point {
 			}
 			pos--
 		}
-		if pos+1 < nHotspots {
-			if (pos + 1) < len(spots) {
-				scores[pos+1] = score
-				spots[pos+1].x = tx
-				spots[pos+1].y = ty
-			} else {
-				//scores = append(scores, scores[pos])
-				scores[pos+1] = score
-				spots = append(spots, point{tx, ty})
-			}
+		if pos == (len(spots)-1) && (pos+1) < nHotspots {
+			//scores = append(scores, scores[pos])
+			scores[pos+1] = score
+			spots = append(spots, point{tx, ty})
 		}
 		checkCount++
 	}
@@ -435,8 +429,8 @@ func (s *Scanner) findOrigImageHotspots() []point {
 }
 
 // copy source data in hotspots to image so we can see what targets we're picking
-func (s *Scanner) hotspotsDebugImage(spots []point) image.Image {
-	width := hotspotSize
+func (s *Scanner) hotspotsDebugImage(spots []point, it *image.YCbCr) *image.RGBA {
+	width := hotspotSize * 6
 	height := hotspotSize * len(spots)
 	fmt.Printf("hots %dx%d\n", width, height)
 	outrect := image.Rect(0, 0, width, height)
@@ -448,6 +442,12 @@ func (s *Scanner) hotspotsDebugImage(spots []point) image.Image {
 			for ix := 0; ix < hotspotSize; ix++ {
 				sc := s.orig.At(mx+ix, my+iy)
 				out.Set(ix, iy+(i*hotspotSize), sc)
+
+				if it != nil {
+					sx, sy := s.origToScanned.transformF(float64(mx+ix), float64(my+iy))
+					sc = ImageBiCatrom(it, sx, sy)
+					out.Set(ix+hotspotSize, iy+(i*hotspotSize), sc)
+				}
 			}
 		}
 	}
@@ -479,6 +479,7 @@ func fmax(a, b float64) float64 {
 	return b
 }
 
+// find the top border and calculate an initial transform based on it
 func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 	misscount := 0
 	hitcount := 0
@@ -537,6 +538,106 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 	return nil
 }
 
+func (s *Scanner) refineTransform(it *image.YCbCr) error {
+	spots := s.findOrigImageHotspots()
+	var debugi *image.RGBA
+	if targetsPngPath != "" {
+		debugi = s.hotspotsDebugImage(spots, it)
+	}
+
+	var scratch [hotspotSize * hotspotSize]uint8
+	for spoti, spot := range spots {
+		// copy thresholded orig to scratch
+		mx := spot.x - (hotspotSize / 2)
+		my := spot.y - (hotspotSize / 2)
+		for iy := 0; iy < hotspotSize; iy++ {
+			for ix := 0; ix < hotspotSize; ix++ {
+				sc := s.orig.At(mx+ix, my+iy)
+				y := colorY(sc)
+				if y >= s.origYThresh {
+					scratch[(hotspotSize*iy)+ix] = 1
+				} else {
+					scratch[(hotspotSize*iy)+ix] = 0
+				}
+				if debugi != nil {
+					debugi.Set(ix+(hotspotSize*4), iy+(hotspotSize*spoti), color.Gray{scratch[(hotspotSize*iy)+ix] * 255})
+				}
+			}
+		}
+		bestdx := hotspotSize
+		bestdy := hotspotSize
+		bestssd := hotspotSize * hotspotSize
+		// seek match
+		for dyi := 0; dyi < hotspotSize; dyi++ {
+			dy := dyi - (hotspotSize / 2)
+			//for dy := hotspotSize / -2; dy < hotspotSize/2; dy++ {
+			for dxi := 0; dxi < hotspotSize; dxi++ {
+				dx := dxi - (hotspotSize / 2)
+				//for dx := hotspotSize / -2; dx < hotspotSize/2; dx++ {
+				ssd := 0
+				// compare spot, offset by (dx,dy)
+				for iy := 0; iy < hotspotSize; iy++ {
+					y := my + dy + iy
+					for ix := 0; ix < hotspotSize; ix++ {
+						x := mx + dx + ix
+						sx, sy := s.origToScanned.transformF(float64(x), float64(y))
+						syv := YBiCatrom(it, sx, sy)
+						var stv uint8
+						if syv > s.scanThresh {
+							stv = 1
+						} else {
+							stv = 0
+						}
+						if stv != scratch[(hotspotSize*iy)+ix] {
+							//fmt.Printf(" %d,%d", x, y)
+							ssd++
+						}
+					}
+				}
+				//fmt.Print("\n")
+				if debugi != nil {
+					debugi.Set(dxi+(hotspotSize*2), dyi+(hotspotSize*spoti), color.Gray{uint8(ssd)})
+				}
+				if ssd < bestssd {
+					//fmt.Printf("(%d,%d) %d -> (%d,%d) %d\n", bestdx, bestdy, bestssd, dx, dy, ssd)
+					bestdx = dx
+					bestdy = dy
+					bestssd = ssd
+				} else {
+					//fmt.Printf("(%d,%d) %d\n", dx, dy, ssd)
+				}
+			}
+		}
+		if bestdx != 0 || bestdy != 0 {
+			fmt.Printf("refine transform %d,%d -> %d,%d (%d, %d)\n", spot.x, spot.y, spot.x+bestdx, spot.y+bestdy, bestdx, bestdy)
+		} else {
+			fmt.Printf("refine transform no change\n")
+		}
+		if debugi != nil {
+			for iy := 0; iy < hotspotSize; iy++ {
+				y := my + bestdy + iy
+				for ix := 0; ix < hotspotSize; ix++ {
+					x := mx + bestdx + ix
+					sx, sy := s.origToScanned.transformF(float64(x), float64(y))
+					syv := YBiCatrom(it, sx, sy)
+					debugi.Set(ix+(hotspotSize*3), iy+(hotspotSize*spoti), color.Gray{syv})
+					//sc := ImageBiCatrom(it, sx, sy)
+					//debugi.Set(ix+(hotspotSize*3), iy+(hotspotSize*spoti), sc)
+				}
+			}
+		}
+		// TODO: subpixel refinement
+	}
+	if targetsPngPath != "" {
+		imout, err := os.Create(targetsPngPath)
+		maybeFail(err, "%s: %s\n", targetsPngPath, err)
+		defer imout.Close()
+		err = png.Encode(imout, debugi)
+		maybeFail(err, "%s: %s\n", targetsPngPath, err)
+	}
+	return nil
+}
+
 func (s *Scanner) translateWholeScanToOrig(it *image.YCbCr) (dboi image.Image, err error) {
 	orect := s.orig.Bounds()
 	oi := image.NewNRGBA(orect)
@@ -548,6 +649,10 @@ func (s *Scanner) translateWholeScanToOrig(it *image.YCbCr) (dboi image.Image, e
 			//v := uint8((ix + iy) & 0x0ff)
 			pi := (zy * oi.Stride) + (zx * 4)
 			if true {
+				sx, sy := s.origToScanned.transformF(float64(zx), float64(zy))
+				yv := YBiCatrom(it, sx, sy)
+				oi.Set(zx, zy, color.Gray{yv})
+			} else if true {
 				sx, sy := s.origToScanned.transformF(float64(zx), float64(zy))
 				oc := ImageBiCatrom(it, sx, sy)
 				oi.Pix[pi] = oc.R
@@ -608,6 +713,21 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 	if err != nil {
 		return err
 	}
+	if debugPngPath != "" {
+		dbimg, err := s.translateWholeScanToOrig(it)
+		if err != nil {
+			return err
+		}
+		dbfout, err := os.Create(debugPngPath)
+		if err != nil {
+			return err
+		}
+		err = png.Encode(dbfout, dbimg)
+		if err != nil {
+			return err
+		}
+	}
+	s.refineTransform(it)
 	if bubblesPngPath != "" {
 		err = s.debugScannedBubbles(it)
 	}
@@ -715,15 +835,6 @@ func main() {
 	fmt.Printf("ds %#v\n", s.bj.Bubbles)
 	err = s.readOrigImage(origPngPath)
 	maybeFail(err, "%s: %s\n", origPngPath, err)
-	if targetsPngPath != "" {
-		spots := s.findOrigImageHotspots()
-		oi := s.hotspotsDebugImage(spots)
-		imout, err := os.Create(targetsPngPath)
-		maybeFail(err, "%s: %s\n", targetsPngPath, err)
-		defer imout.Close()
-		err = png.Encode(imout, oi)
-		maybeFail(err, "%s: %s\n", targetsPngPath, err)
-	}
 
 	err = s.readScannedImage(scanImgPath)
 	maybeFail(err, "%s: %s\n", scanImgPath, err)

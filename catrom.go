@@ -97,3 +97,41 @@ func ImageBiCatrom(im image.Image, x, y float64) color.RGBA {
 	outf.b = fclamp(outf.b/255.0, 0, outf.a)
 	return color.RGBA{uint8(outf.r), uint8(outf.g), uint8(outf.b), uint8(outf.a)}
 }
+
+func YBiCatrom(im *image.YCbCr, x, y float64) uint8 {
+	bound := im.Bounds()
+	fxf := math.Floor(x)
+	fx := int(fxf)
+	fyf := math.Floor(y)
+	fy := int(fyf)
+	if fx < bound.Min.X || fx >= bound.Max.X || fy < bound.Min.Y || fy >= bound.Max.Y {
+		return 0
+	}
+	if fx < bound.Min.X+1 || fx >= bound.Max.X-1 || fy < bound.Min.Y+1 || fy >= bound.Max.Y-1 {
+		// linear interpolation at the edges.
+		// TODO!
+		return 0
+	}
+	// first interpolate across each row to a point at x
+	var xw [4]float64
+	catromWeights(x-fxf, xw[:])
+	//var xpoints [4]frgba
+	var xyvals [4]float64
+	//var row [4]color.Color
+	for iy := 0; iy < 4; iy++ {
+		y := fy - 1 + iy
+		for ix := 0; ix < 4; ix++ {
+			xyvals[iy] += float64(im.Y[(im.YStride*y)+(fx-1+ix)]) * xw[ix]
+		}
+	}
+
+	// second interpolate along vertical line at x to point at y
+	catromWeights(y-fyf, xw[:])
+	outy := 0.0
+	for i := 0; i < 4; i++ {
+		outy += xyvals[i] * xw[i]
+	}
+	outb := uint8(fclamp(outy, 0, 255))
+	//fmt.Printf("%f -> %d\n", outy, outb)
+	return outb
+}
