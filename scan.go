@@ -390,12 +390,8 @@ func (s *Scanner) debugOrigBubbles(outpath string) error {
 		for iy := 0; iy < outHeightPx; iy++ {
 			dy := opngy - (float64(iy) * 0.25)
 			for ix := 0; ix < outWidthPx; ix++ {
-				//for dy := 0.0; dy < xywh[3]; dy += 0.25 {
-				//for dx := 0.0; dx < xywh[2]; dx += 0.25 {
 				pi := ((outy - iy) * oi.Stride) + (ix * 4)
 				dx := opngx + (float64(ix) * 0.25)
-				//sx, sy := s.origToScanned.Transform(dx, dy)
-				//oc := ImageBiCatrom(it, sx, sy)
 				oc := ImageBiCatrom(s.orig, dx, dy)
 				oi.Pix[pi] = oc.R
 				oi.Pix[pi+1] = oc.G
@@ -832,6 +828,12 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 }
 
 func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
+	imout, err := os.Create(bubblesPngPath)
+	if err != nil {
+		return fmt.Errorf("%s: %s", bubblesPngPath, err)
+	}
+	defer imout.Close()
+
 	sourceSelectionBounds := make([][]float64, 0, 100)
 	maxWidth := 0.0
 	maxHeight := 0.0
@@ -852,6 +854,8 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 	oi := image.NewNRGBA(orect)
 	opngBounds := s.orig.Bounds()
 	for i, xywh := range sourceSelectionBounds {
+		darkCount := 0
+		pxCount := 0
 		// (printx,printy) coord in pt from bottom left
 		printx := xywh[0]
 		printy := xywh[1]
@@ -862,29 +866,47 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 		outy := (int(maxHeight) * 4 * (i + 1)) - 1
 		outWidthPx := int(math.Ceil(xywh[2] * 4 * s.origPxPerPt))
 		outHeightPx := int(math.Ceil(xywh[3] * 4 * s.origPxPerPt))
+		centerY := outHeightPx / 2
+		minsamplex := outWidthPx / 10
+		maxsamplex := (outWidthPx * 9) / 10
 		for iy := 0; iy < outHeightPx; iy++ {
 			dy := opngy - (float64(iy) * 0.25)
 			for ix := 0; ix < outWidthPx; ix++ {
-				//for dy := 0.0; dy < xywh[3]; dy += 0.25 {
-				//for dx := 0.0; dx < xywh[2]; dx += 0.25 {
 				pi := ((outy - iy) * oi.Stride) + (ix * 4)
 				dx := opngx + (float64(ix) * 0.25)
 				sx, sy := s.origToScanned.Transform(dx, dy)
 				oc := ImageBiCatrom(it, sx, sy)
-				//oc := ImageBiCatrom(s.orig, dx, dy)
+				if (iy == centerY || iy == (centerY-8) || iy == (centerY+8)) && (ix%16 == 0) && (ix > minsamplex) && (ix < maxsamplex) {
+					oc.G = 255
+					oc.R /= 2
+					oc.B /= 2
+					syv := YBiCatrom(it, sx, sy)
+					if syv < s.scanThresh {
+						darkCount++
+					}
+					pxCount++
+				}
 				oi.Pix[pi] = oc.R
 				oi.Pix[pi+1] = oc.G
 				oi.Pix[pi+2] = oc.B
 				oi.Pix[pi+3] = oc.A
 			}
 		}
+		// TODO: record mediocre matches with 30%-70% fill, flag for inspection
+		fmt.Printf("%d/%d dark/all px\n", darkCount, pxCount)
+		if darkCount > ((pxCount * 7) / 10) {
+			oc := color.RGBA{0, 255, 0, 255}
+			for iy := 0; iy < outHeightPx; iy++ {
+				for ix := 0; ix < 3; ix++ {
+					pi := ((outy - iy) * oi.Stride) + (ix * 4)
+					oi.Pix[pi] = oc.R
+					oi.Pix[pi+1] = oc.G
+					oi.Pix[pi+2] = oc.B
+					oi.Pix[pi+3] = oc.A
+				}
+			}
+		}
 	}
-
-	imout, err := os.Create(bubblesPngPath)
-	if err != nil {
-		return fmt.Errorf("%s: %s", bubblesPngPath, err)
-	}
-	defer imout.Close()
 	err = png.Encode(imout, oi)
 	return err
 }
