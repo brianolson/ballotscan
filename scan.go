@@ -350,6 +350,64 @@ func (s *Scanner) readOrigImage(origname string) error {
 	return nil
 }
 
+func (s *Scanner) debugOrigBubbles(outpath string) error {
+	imout, err := os.Create(outpath)
+	if err != nil {
+		return fmt.Errorf("%s: could not create, %v", outpath, err)
+	}
+	defer imout.Close()
+
+	sourceSelectionBounds := make([][]float64, 0, 100)
+	maxWidth := 0.0
+	maxHeight := 0.0
+	for _, ballotType := range s.bj.Bubbles {
+		for _, csels := range ballotType { // _ = contestName
+			for _, xywh := range csels { // _ = cselName
+				sourceSelectionBounds = append(sourceSelectionBounds, xywh)
+				maxWidth = fmax(maxWidth, xywh[2])
+				maxHeight = fmax(maxHeight, xywh[3])
+			}
+		}
+	}
+	maxWidth = math.Ceil(maxWidth * s.origPxPerPt)
+	maxHeight = math.Ceil(maxHeight * s.origPxPerPt)
+	oiw := int(maxWidth) * 4
+	oih := int(maxHeight) * 4 * len(sourceSelectionBounds)
+	orect := image.Rect(0, 0, oiw, oih)
+	oi := image.NewNRGBA(orect)
+	opngBounds := s.orig.Bounds()
+	for i, xywh := range sourceSelectionBounds {
+		// (printx,printy) coord in pt from bottom left
+		printx := xywh[0]
+		printy := xywh[1]
+		// coords in orig png, bottom left pixel
+		opngx := printx * s.origPxPerPt
+		opngy := float64(opngBounds.Max.Y) - (printy * s.origPxPerPt)
+
+		outy := (int(maxHeight) * 4 * (i + 1)) - 1
+		outWidthPx := int(math.Ceil(xywh[2] * 4 * s.origPxPerPt))
+		outHeightPx := int(math.Ceil(xywh[3] * 4 * s.origPxPerPt))
+		for iy := 0; iy < outHeightPx; iy++ {
+			dy := opngy - (float64(iy) * 0.25)
+			for ix := 0; ix < outWidthPx; ix++ {
+				//for dy := 0.0; dy < xywh[3]; dy += 0.25 {
+				//for dx := 0.0; dx < xywh[2]; dx += 0.25 {
+				pi := ((outy - iy) * oi.Stride) + (ix * 4)
+				dx := opngx + (float64(ix) * 0.25)
+				//sx, sy := s.origToScanned.Transform(dx, dy)
+				//oc := ImageBiCatrom(it, sx, sy)
+				oc := ImageBiCatrom(s.orig, dx, dy)
+				oi.Pix[pi] = oc.R
+				oi.Pix[pi+1] = oc.G
+				oi.Pix[pi+2] = oc.B
+				oi.Pix[pi+3] = oc.A
+			}
+		}
+	}
+	err = png.Encode(imout, oi)
+	return err
+}
+
 const hotspotSize = 15
 
 // check potential hotspot center (tx,ty) for quality
@@ -853,7 +911,8 @@ var (
 	bubbleJsonPath string
 	origPngPath    string
 	targetsPngPath string // debug png with sync targets
-	bubblesPngPath string // debug png with bubbles from source
+	bubblesPngPath string // debug png with bubbles from scan
+	bubOrigPngPath string // debug png with bubbles from source
 	debugPngPath   string
 	scanImgPath    string
 )
@@ -863,6 +922,7 @@ func main() {
 	flag.StringVar(&origPngPath, "orig", "", "orig png")
 	flag.StringVar(&debugPngPath, "dbpng", "", "debug png out")
 	flag.StringVar(&bubblesPngPath, "bubpng", "", "debug bubbles png out")
+	flag.StringVar(&bubOrigPngPath, "buborig", "", "debug bubbles from source")
 	flag.StringVar(&targetsPngPath, "targets", "", "debug targets png out")
 	flag.StringVar(&scanImgPath, "scan", "", "scan img in")
 	flag.Parse()
@@ -874,6 +934,9 @@ func main() {
 	fmt.Printf("ds %#v\n", s.bj.Bubbles)
 	err = s.readOrigImage(origPngPath)
 	maybeFail(err, "%s: %s\n", origPngPath, err)
+	if bubOrigPngPath != "" {
+		s.debugOrigBubbles(bubOrigPngPath)
+	}
 
 	err = s.readScannedImage(scanImgPath)
 	maybeFail(err, "%s: %s\n", scanImgPath, err)

@@ -26,5 +26,7 @@ $.05 per ballot counted in a 24-hour count
 2020-04-13 21:46:11 EDT (Monday, April 13 09:46:11 PM)
 
 http://www.cs.unc.edu/~lazebnik/research/spring08/lec10_alignment.pdf
+https://textbooks.math.gatech.edu/ila/least-squares.html
+https://textbooks.math.gatech.edu/ila/row-reduction.html
 
 https://godoc.org/gonum.org/v1/gonum/mat
