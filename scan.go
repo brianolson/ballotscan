@@ -893,6 +893,7 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 			}
 		}
 		// TODO: record mediocre matches with 30%-70% fill, flag for inspection
+		// TODO: measure extraneous marks in ballot and flag for review
 		fmt.Printf("%d/%d dark/all px\n", darkCount, pxCount)
 		if darkCount > ((pxCount * 7) / 10) {
 			oc := color.RGBA{0, 255, 0, 255}

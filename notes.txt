@@ -30,3 +30,7 @@ https://textbooks.math.gatech.edu/ila/least-squares.html
 https://textbooks.math.gatech.edu/ila/row-reduction.html
 
 https://godoc.org/gonum.org/v1/gonum/mat
+
+2020-05-20 07:56:34 EDT (Wednesday, May 20 07:56:34 AM)
+
+TODO: http server, receive images POSTed and scan them, return JSON of which bubbles were filled (how to pair with bubbles.json ? lookup from db, also post? *URL to scan service!*)
