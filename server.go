@@ -43,6 +43,17 @@ func textResponse(w http.ResponseWriter, code int, text string) {
 	w.Write([]byte(text))
 }
 
+func jsonResponse(w http.ResponseWriter, code int, ob interface{}) {
+	jb, err := json.Marshal(ob)
+	if err != nil {
+		textResponse(w, http.StatusInternalServerError, "return value json encode error")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(jb)
+}
+
 func (ss *ScanServer) studioUrl(suffix string) string {
 	ub, err := url.Parse(ss.studioPrefix)
 	if err != nil {
@@ -182,12 +193,12 @@ func (ss *ScanServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				textResponse(w, http.StatusBadRequest, "bad image")
 				return
 			}
-			err = s.processScannedImage(im)
+			marked, err := s.processScannedImage(im)
 			if err != nil {
 				textResponse(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			textResponse(w, http.StatusInternalServerError, "TODO WRITEME actually return structured data of which bubbles were filled")
+			jsonResponse(w, http.StatusOK, marked)
 			return
 		}
 	}

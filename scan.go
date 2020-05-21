@@ -544,25 +544,25 @@ func (s *Scanner) hotspotsDebugImage(spots []point, it *image.YCbCr) *image.RGBA
 	return out
 }
 
-func (s *Scanner) readScannedImage(fname string) error {
+func (s *Scanner) readScannedImage(fname string) (marked map[string]map[string]bool, err error) {
 	r, err := os.Open(fname)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer r.Close()
 	im, _, err := image.Decode(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return s.processScannedImage(im)
 }
 
-func (s *Scanner) processScannedImage(im image.Image) error {
+func (s *Scanner) processScannedImage(im image.Image) (marked map[string]map[string]bool, err error) {
 	switch it := im.(type) {
 	case *image.YCbCr:
 		return s.processYCbCr(it)
 	default:
-		return fmt.Errorf("unknown image type %T", im)
+		return nil, fmt.Errorf("unknown image type %T", im)
 	}
 }
 
@@ -774,10 +774,9 @@ func (s *Scanner) translateWholeScanToOrig(it *image.YCbCr) (dboi image.Image, e
 	return oi, nil
 }
 
-func (s *Scanner) processYCbCr(it *image.YCbCr) error {
-	var err error
+func (s *Scanner) processYCbCr(it *image.YCbCr) (marked map[string]map[string]bool, err error) {
 	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
-		return fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
+		return nil, fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
 	}
 	fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
 	// pxy(it, 0, 0)
@@ -813,27 +812,105 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) error {
 
 	err = s.topLineYCbCr(it)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	s.refineTransform(it)
 	if debugPngPath != "" {
 		dbimg, err := s.translateWholeScanToOrig(it)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		dbfout, err := os.Create(debugPngPath)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		err = png.Encode(dbfout, dbimg)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if bubblesPngPath != "" {
 		err = s.debugScannedBubbles(it)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return err
+	return s.measureScannedBubbles(it), nil
+}
+
+func (s *Scanner) measureBubble(it *image.YCbCr, xywh []float64) (darkCount, pxCount int) {
+	darkCount = 0
+	pxCount = 0
+	// (printx,printy) coord in pt from bottom left
+	printx := xywh[0]
+	printy := xywh[1]
+	// coords in orig png, bottom left pixel
+	opngBounds := s.orig.Bounds()
+	opngx := printx * s.origPxPerPt
+	opngy := float64(opngBounds.Max.Y) - (printy * s.origPxPerPt)
+
+	//outy := (int(maxHeight) * 4 * (i + 1)) - 1
+	outWidthPx := int(math.Ceil(xywh[2] * 4 * s.origPxPerPt))
+	outHeightPx := int(math.Ceil(xywh[3] * 4 * s.origPxPerPt))
+	centerY := outHeightPx / 2
+	minsamplex := outWidthPx / 10
+	maxsamplex := (outWidthPx * 9) / 10
+	for iiy := -1; iiy <= 1; iiy++ {
+		iy := centerY + (iiy * 8)
+		//for iy := 0; iy < outHeightPx; iy++ {
+		dy := opngy - (float64(iy) * 0.25)
+		for ix := minsamplex; ix < maxsamplex; ix += 16 {
+			//for ix := 0; ix < outWidthPx; ix++ {
+			dx := opngx + (float64(ix) * 0.25)
+			sx, sy := s.origToScanned.Transform(dx, dy)
+			oc := ImageBiCatrom(it, sx, sy)
+			//if (iy == centerY || iy == (centerY-8) || iy == (centerY+8)) && (ix%16 == 0) && (ix > minsamplex) && (ix < maxsamplex) {
+			oc.G = 255
+			oc.R /= 2
+			oc.B /= 2
+			syv := YBiCatrom(it, sx, sy)
+			if syv < s.scanThresh {
+				darkCount++
+			}
+			pxCount++
+			//}
+			/*
+				if oi != nil {
+					pi := ((outy - iy) * oi.Stride) + (ix * 4)
+					oi.Pix[pi] = oc.R
+					oi.Pix[pi+1] = oc.G
+					oi.Pix[pi+2] = oc.B
+					oi.Pix[pi+3] = oc.A
+				}
+			*/
+		}
+	}
+	// TODO: record mediocre matches with 30%-70% fill, flag for inspection
+	// TODO: measure extraneous marks in ballot and flag for review
+	return
+	/*
+		fmt.Printf("%d/%d dark/all px\n", darkCount, pxCount)
+		if darkCount > ((pxCount * 7) / 10) {
+		}
+	*/
+}
+
+func (s *Scanner) measureScannedBubbles(it *image.YCbCr) (marked map[string]map[string]bool) {
+	marked = make(map[string]map[string]bool)
+	for _, ballotType := range s.bj.Bubbles {
+		for contestName, csels := range ballotType {
+			conout := make(map[string]bool)
+			for cselName, xywh := range csels {
+				darkCount, pxCount := s.measureBubble(it, xywh)
+				fmt.Printf("%s\t%s\t%d/%d dark/all px\n", contestName, cselName, darkCount, pxCount)
+				if darkCount > ((pxCount * 7) / 10) {
+					conout[cselName] = true
+				}
+			}
+			marked[contestName] = conout
+		}
+	}
+	return
 }
 
 func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
@@ -987,6 +1064,7 @@ func main() {
 		s.debugOrigBubbles(bubOrigPngPath)
 	}
 
-	err = s.readScannedImage(scanImgPath)
+	marked, err := s.readScannedImage(scanImgPath)
 	maybeFail(err, "%s: %s\n", scanImgPath, err)
+	fmt.Fprintf(os.Stdout, "marked: %v\n", marked)
 }
