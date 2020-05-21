@@ -314,15 +314,19 @@ func (s *Scanner) readBubblesJson(path string) error {
 func (s *Scanner) readOrigImage(origname string) error {
 	r, err := os.Open(origname)
 	maybeFail(err, "%s: %s", origname, err)
-	orig, format, err := image.Decode(r)
-	maybeFail(err, "%s: %s", origname, err)
 	defer r.Close()
+	orig, format, err := image.Decode(r)
+	maybeFail(err, "%s: %v %s", origname, format, err)
+	return s.setOrigImage(orig)
+}
+
+func (s *Scanner) setOrigImage(orig image.Image) error {
 	s.orig = orig
 	orect := orig.Bounds()
 	if orect.Min.X != 0 || orect.Min.Y != 0 {
 		return fmt.Errorf("nonzero origin for original pic. WAT?\n")
 	}
-	fmt.Printf("orig %s %T %v\n", format, orig, orect)
+	fmt.Printf("orig %T %v\n", orig, orect)
 	origPxPerPtX := float64(orect.Max.X-orect.Min.X) / s.bj.DrawSettings.PageSize[0]
 	origPxPerPtY := float64(orect.Max.Y-orect.Min.Y) / s.bj.DrawSettings.PageSize[1]
 	if math.Abs((origPxPerPtY/origPxPerPtX)-1) > 0.01 {
@@ -545,15 +549,19 @@ func (s *Scanner) readScannedImage(fname string) error {
 		return err
 	}
 	defer r.Close()
-	im, format, err := image.Decode(r)
+	im, _, err := image.Decode(r)
 	if err != nil {
 		return err
 	}
+	return s.processScannedImage(im)
+}
+
+func (s *Scanner) processScannedImage(im image.Image) error {
 	switch it := im.(type) {
 	case *image.YCbCr:
 		return s.processYCbCr(it)
 	default:
-		return fmt.Errorf("unknown image type %s %T", format, im)
+		return fmt.Errorf("unknown image type %T", im)
 	}
 }
 
