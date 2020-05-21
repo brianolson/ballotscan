@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -42,6 +43,15 @@ func textResponse(w http.ResponseWriter, code int, text string) {
 	w.Write([]byte(text))
 }
 
+func (ss *ScanServer) studioUrl(suffix string) string {
+	ub, err := url.Parse(ss.studioPrefix)
+	if err != nil {
+		panic(err)
+	}
+	ub.Path = path.Join(ub.Path, suffix)
+	return ub.String()
+}
+
 // Looks up bubbles.json from ballotstudio service {studioPrefix}/election/{electionid}_bubbles.json
 func (ss *ScanServer) getBubbles(electionid int64) (bj *BubblesJson, err error) {
 	// two small lock windows. do _not_ hold the lock during potentially slow HTTP GET
@@ -52,7 +62,7 @@ func (ss *ScanServer) getBubbles(electionid int64) (bj *BubblesJson, err error) 
 	if ok {
 		return bj, nil
 	}
-	url := path.Join(ss.studioPrefix, fmt.Sprintf("/election/%d_bubbles.json", electionid))
+	url := ss.studioUrl(fmt.Sprintf("/election/%d_bubbles.json", electionid))
 	response, err := ss.getter.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("GET %v, %s", url, err.Error())
@@ -75,7 +85,6 @@ func (ss *ScanServer) getBubbles(electionid int64) (bj *BubblesJson, err error) 
 // Looks up pallot png from ballotstudio service {studioPrefix}/election/{electionid}.png
 func (ss *ScanServer) getBallotPNG(electionid int64) (pngbytes []byte, err error) {
 	// two small lock windows. do _not_ hold the lock during potentially slow HTTP GET
-	// TODO: fixup copy-pasta, make this about PNG not bubble json
 	ss.bubbleCacheLock.Lock()
 	var ok bool
 	pngbytes, ok = ss.pngCache[electionid]
@@ -83,7 +92,7 @@ func (ss *ScanServer) getBallotPNG(electionid int64) (pngbytes []byte, err error
 	if ok {
 		return pngbytes, nil
 	}
-	url := path.Join(ss.studioPrefix, fmt.Sprintf("/election/%d.png", electionid))
+	url := ss.studioUrl(fmt.Sprintf("/election/%d.png", electionid))
 	response, err := ss.getter.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("GET %v, %s", url, err.Error())

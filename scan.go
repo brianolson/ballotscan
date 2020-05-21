@@ -11,6 +11,7 @@ import (
 	_ "image/png"
 	"math"
 	"math/rand"
+	"net/http"
 	"os"
 )
 
@@ -946,6 +947,10 @@ var (
 	bubOrigPngPath string // debug png with bubbles from source
 	debugPngPath   string
 	scanImgPath    string
+
+	serveAddr    string
+	servePrefix  string
+	studioPrefix string
 )
 
 func main() {
@@ -956,8 +961,21 @@ func main() {
 	flag.StringVar(&bubOrigPngPath, "buborig", "", "debug bubbles from source")
 	flag.StringVar(&targetsPngPath, "targets", "", "debug targets png out")
 	flag.StringVar(&scanImgPath, "scan", "", "scan img in")
+
+	flag.StringVar(&serveAddr, "httpd", "", "host:port to serve on")
+	flag.StringVar(&servePrefix, "servePrefix", "", "app prefix, e.g. /bscan")
+	flag.StringVar(&studioPrefix, "studio", "http://localhost:5000/", "base URL of ballotstudio app")
 	flag.Parse()
+
 	var err error
+	if len(serveAddr) > 0 {
+		xserver := NewScanServer()
+		xserver.appPrefix = servePrefix
+		xserver.studioPrefix = studioPrefix
+		err = http.ListenAndServe(serveAddr, xserver)
+		fmt.Fprintf(os.Stderr, "ListenAndServe(%v): %v", serveAddr, err)
+		return
+	}
 	var s Scanner
 	err = s.readBubblesJson(bubbleJsonPath)
 	maybeFail(err, "%s: %s", bubbleJsonPath, err)
