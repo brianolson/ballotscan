@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	_ "image/png"
+	"log"
 	"math"
 	"math/rand"
 	"net/http"
@@ -1055,6 +1056,7 @@ func main() {
 			xserver.archiver, err = NewFileImageArchiver(imageArchiveDir)
 			maybeFail(err, "%s: %v", imageArchiveDir, err)
 		}
+		log.Printf("serving\t%s", serveAddr)
 		err = http.ListenAndServe(serveAddr, xserver)
 		fmt.Fprintf(os.Stderr, "ListenAndServe(%v): %v", serveAddr, err)
 		return

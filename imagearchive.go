@@ -169,18 +169,21 @@ func (fia *fileImageArchiver) loadDupCache() (err error) {
 		fia.recentHashesCBuf = make([]uint64, 4000)
 		fia.recentHashesMap = make(map[uint64]bool, 4000)
 		fia.recentHashesCBufPos = 0
+		count := 0
 		for true {
 			var rec ArchiveImageRecord
 			err = dec.Decode(&rec)
 			if err != nil {
-				continue
+				break
 			}
 			hasher := fnv.New64a()
 			hasher.Write(rec.Image)
 			imhash := hasher.Sum64()
 			fia.recentHashesCBuf[fia.recentHashesCBufPos] = imhash
 			fia.recentHashesMap[imhash] = true
+			count++
 		}
+		log.Printf("%s: loaded %d imhash", newestpath, count)
 	}
 	return nil
 }
