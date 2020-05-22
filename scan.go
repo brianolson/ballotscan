@@ -1025,9 +1025,10 @@ var (
 	debugPngPath   string
 	scanImgPath    string
 
-	serveAddr    string
-	servePrefix  string
-	studioPrefix string
+	serveAddr       string
+	servePrefix     string
+	studioPrefix    string
+	imageArchiveDir string
 )
 
 func main() {
@@ -1042,6 +1043,7 @@ func main() {
 	flag.StringVar(&serveAddr, "httpd", "", "host:port to serve on")
 	flag.StringVar(&servePrefix, "servePrefix", "", "app prefix, e.g. /bscan")
 	flag.StringVar(&studioPrefix, "studio", "http://localhost:5000/", "base URL of ballotstudio app")
+	flag.StringVar(&imageArchiveDir, "imageArchiveDir", "", "directory to archive images to (server will mkdir -p if needed)")
 	flag.Parse()
 
 	var err error
@@ -1049,6 +1051,10 @@ func main() {
 		xserver := NewScanServer()
 		xserver.appPrefix = servePrefix
 		xserver.studioPrefix = studioPrefix
+		if imageArchiveDir != "" {
+			xserver.archiver, err = NewFileImageArchiver(imageArchiveDir)
+			maybeFail(err, "%s: %v", imageArchiveDir, err)
+		}
 		err = http.ListenAndServe(serveAddr, xserver)
 		fmt.Fprintf(os.Stderr, "ListenAndServe(%v): %v", serveAddr, err)
 		return

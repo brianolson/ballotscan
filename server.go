@@ -25,6 +25,8 @@ type ScanServer struct {
 	studioPrefix string
 
 	getter *http.Client
+
+	archiver ImageArchiver
 }
 
 func NewScanServer() *ScanServer {
@@ -187,11 +189,20 @@ func (ss *ScanServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("got part cd=%v fn=%v form=%v", part.Header.Get("Content-Disposition"), part.FileName(), part.FormName())
 		if isImage(part.Header.Get("Content-Type")) {
-			im, format, err := image.Decode(part)
+			imbytes, err := ioutil.ReadAll(part)
+			if err != nil {
+				log.Printf("bad image part cd=%v fn=%v form=%v format=%v err=%v", part.Header.Get("Content-Disposition"), part.FileName(), part.FormName(), format, err)
+				textResponse(w, http.StatusBadRequest, "bad image part")
+				return
+			}
+			im, format, err := image.Decode(bytes.NewReader(imbytes))
 			if err != nil {
 				log.Printf("bad image decode cd=%v fn=%v form=%v format=%v err=%v", part.Header.Get("Content-Disposition"), part.FileName(), part.FormName(), format, err)
 				textResponse(w, http.StatusBadRequest, "bad image")
 				return
+			}
+			if ss.archiver != nil {
+				go ss.archiver.ArchiveImage(imbytes, r)
 			}
 			marked, err := s.processScannedImage(im)
 			if err != nil {
