@@ -1,0 +1,56 @@
+# ROOTDIR=`pwd -P`
+# sed "s/@@ROOTDIR@@/${ROOTDIR}/g" < nginx.conf.in > nginx.conf
+# nginx -c nginx.conf
+
+error_log stderr;
+daemon off;
+#access_log stderr;
+worker_processes 1;
+pid @@ROOTDIR@@/log/nginx.pid;
+
+events {
+	worker_connections 32;
+}
+
+http {
+	sendfile on;
+	tcp_nopush on;
+	tcp_nodelay on;
+	keepalive_timeout 65;
+	types_hash_max_size 2048;
+	include /etc/nginx/mime.types;
+	default_type application/octet-stream;
+	gzip on;
+
+	access_log @@ROOTDIR@@/log/access.log;
+	error_log @@ROOTDIR@@/log/error.log;
+
+	proxy_cache_methods GET HEAD;
+
+	# TODO: figure out one config to re-root all the stuff nginx would put under /var/lib/nginx ?
+	proxy_temp_path @@ROOTDIR@@/nginx/tmp;
+	proxy_cache_path @@ROOTDIR@@/nginx/cache keys_zone=one:1m;
+	client_body_temp_path @@ROOTDIR@@/nginx/ctmp;
+
+	server {
+		listen 5002;
+		listen [::]:5002;
+
+		server_name ballotdev.betterpolls.com;
+		index index.html;
+		root @@ROOTDIR@@;
+
+		location / {
+			# ballotstudio
+			proxy_pass http://127.0.0.1:5000/;
+		}
+		location /scan/ {
+			# ballotscan
+			proxy_pass http://127.0.0.1:5001/scan/;
+		}
+		location /static/ {
+			# ballotstudio static
+			root @@STUDIODIR@@;
+		}
+	}
+}
