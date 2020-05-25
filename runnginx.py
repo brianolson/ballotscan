@@ -25,14 +25,14 @@ def main():
         raw = fin.read()
     x = raw.replace('@@ROOTDIR@@', pwd)
     x = x.replace('@@STUDIODIR@@', studiodir)
-    with open('nginx.conf', 'wt') as fout:
-        fout.write(x)
-    logpath = os.path.join(pwd, 'log')
-    os.makedirs(logpath, exist_ok=True)
+    os.makedirs(os.path.join(pwd, 'nginx', 'log'), exist_ok=True)
     os.makedirs(os.path.join(pwd, 'nginx', 'cache'), exist_ok=True)
     os.makedirs(os.path.join(pwd, 'nginx', 'ctmp'), exist_ok=True)
     os.makedirs(os.path.join(pwd, 'nginx', 'tmp'), exist_ok=True)
-    os.execvp('nginx', ['nginx', '-c', 'nginx.conf', '-p', pwd])
+    confpath = os.path.join(pwd, 'nginx','nginx.conf')
+    with open(confpath, 'wt') as fout:
+        fout.write(x)
+    os.execvp('nginx', ['nginx', '-c', confpath, '-p', os.path.join(pwd, 'nginx')])
 
 if __name__ == '__main__':
     main()

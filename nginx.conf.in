@@ -6,7 +6,7 @@ error_log stderr;
 daemon off;
 #access_log stderr;
 worker_processes 1;
-pid @@ROOTDIR@@/log/nginx.pid;
+pid @@ROOTDIR@@/nginx/nginx.pid;
 
 events {
 	worker_connections 32;
@@ -22,8 +22,8 @@ http {
 	default_type application/octet-stream;
 	gzip on;
 
-	access_log @@ROOTDIR@@/log/access.log;
-	error_log @@ROOTDIR@@/log/error.log;
+	access_log @@ROOTDIR@@/nginx/log/access.log;
+	error_log @@ROOTDIR@@/nginx/log/error.log;
 
 	proxy_cache_methods GET HEAD;
 
