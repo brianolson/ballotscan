@@ -47,8 +47,4 @@ go build && ./ballotscan -httpd :5001 -studio http://localhost:5000/
 # optional, mkdir -p ballotscan_imarch
 # -imageArchiveDir ballotscan_imarch
 
-#ROOTDIR=`pwd -P`
-#sed "s/@@ROOTDIR@@/${ROOTDIR}/g" < nginx.conf.in > nginx.conf
-sed "s,@@ROOTDIR@@,$(pwd -P),g" < nginx.conf.in > nginx.conf
-mkdir -p log
-nginx -c nginx.conf
+python3 runnginx.py
