@@ -173,6 +173,19 @@ func (ss *ScanServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.bj = *bubbles
 	s.setOrigImage(orig)
 
+	if isImage(r.Header.Get("Content-Type")) {
+		// raw POST body image
+		// TODO: configurable max size, now 10 MB
+		brc := http.MaxBytesReader(w, r.Body, 10000000)
+		imbytes, err := ioutil.ReadAll(brc)
+		if err != nil {
+			textResponse(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ss.doim(w, r, imbytes, &s, "post body")
+		return
+	}
+
 	mpreader, err := r.MultipartReader()
 	if err != nil {
 		textResponse(w, http.StatusBadRequest, err.Error())
@@ -195,21 +208,8 @@ func (ss *ScanServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				textResponse(w, http.StatusBadRequest, "bad image part")
 				return
 			}
-			im, format, err := image.Decode(bytes.NewReader(imbytes))
-			if err != nil {
-				log.Printf("bad image decode cd=%v fn=%v form=%v format=%v err=%v", part.Header.Get("Content-Disposition"), part.FileName(), part.FormName(), format, err)
-				textResponse(w, http.StatusBadRequest, "bad image")
-				return
-			}
-			if ss.archiver != nil {
-				go ss.archiver.ArchiveImage(imbytes, r)
-			}
-			marked, err := s.processScannedImage(im)
-			if err != nil {
-				textResponse(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			jsonResponse(w, http.StatusOK, marked)
+			msg := fmt.Sprintf("cd=%v fn=%v form=%v", part.Header.Get("Content-Disposition"), part.FileName(), part.FormName())
+			ss.doim(w, r, imbytes, &s, msg)
 			return
 		}
 	}
@@ -218,4 +218,22 @@ func (ss *ScanServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func isImage(contentType string) bool {
 	return strings.HasPrefix(contentType, "image/")
+}
+
+func (ss *ScanServer) doim(w http.ResponseWriter, r *http.Request, imbytes []byte, s *Scanner, msg string) {
+	im, format, err := image.Decode(bytes.NewReader(imbytes))
+	if err != nil {
+		log.Printf("bad image decode %v format=%v err=%v", msg, format, err)
+		textResponse(w, http.StatusBadRequest, "bad image")
+		return
+	}
+	if ss.archiver != nil {
+		go ss.archiver.ArchiveImage(imbytes, r)
+	}
+	marked, err := s.processScannedImage(im)
+	if err != nil {
+		textResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, marked)
 }
