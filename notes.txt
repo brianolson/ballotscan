@@ -48,3 +48,13 @@ go build && ./ballotscan -httpd :5001 -studio http://localhost:5000/
 # -imageArchiveDir ballotscan_imarch
 
 python3 runnginx.py
+
+
+https://github.com/dgraph-io/badger
+CGO_ENABLED=0 go get github.com/dgraph-io/badger/...
+31000 lines
+
+https://github.com/etcd-io/bbolt
+git clone git@github.com:etcd-io/bbolt.git
+14000 lines
+go get go.etcd.io/bbolt/...

@@ -9,6 +9,7 @@ import (
 	_ "image/jpeg"
 	"image/png"
 	_ "image/png"
+	"io"
 	"log"
 	"math"
 	"math/rand"
@@ -301,6 +302,14 @@ type Scanner struct {
 	scanThresh uint8
 
 	origToScanned AffineTransform
+
+	debugOut io.Writer
+}
+
+func (s *Scanner) debug(format string, args ...interface{}) {
+	if s.debugOut != nil {
+		fmt.Fprintf(s.debugOut, format, args...)
+	}
 }
 
 func (s *Scanner) readBubblesJson(path string) error {
@@ -328,7 +337,7 @@ func (s *Scanner) setOrigImage(orig image.Image) error {
 	if orect.Min.X != 0 || orect.Min.Y != 0 {
 		return fmt.Errorf("nonzero origin for original pic. WAT?\n")
 	}
-	fmt.Printf("orig %T %v\n", orig, orect)
+	s.debug("orig %T %v\n", orig, orect)
 	origPxPerPtX := float64(orect.Max.X-orect.Min.X) / s.bj.DrawSettings.PageSize[0]
 	origPxPerPtY := float64(orect.Max.Y-orect.Min.Y) / s.bj.DrawSettings.PageSize[1]
 	if math.Abs((origPxPerPtY/origPxPerPtX)-1) > 0.01 {
@@ -343,7 +352,7 @@ func (s *Scanner) setOrigImage(orig image.Image) error {
 		x: int((s.bj.DrawSettings.PageSize[0] - s.bj.DrawSettings.PageMargin) * s.origPxPerPt),
 		y: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
 	}
-	fmt.Printf("top line orig (%d,%d)-(%d,%d)\n", s.origTopLeft.x, s.origTopLeft.y, s.origTopRight.x, s.origTopRight.y)
+	s.debug("top line orig (%d,%d)-(%d,%d)\n", s.origTopLeft.x, s.origTopLeft.y, s.origTopRight.x, s.origTopRight.y)
 
 	var hist [256]uint
 	for iy := orect.Min.Y; iy < orect.Max.Y; iy++ {
@@ -523,7 +532,7 @@ func (s *Scanner) findOrigImageHotspots() []point {
 func (s *Scanner) hotspotsDebugImage(spots []point, it *image.YCbCr) *image.RGBA {
 	width := hotspotSize * 6
 	height := hotspotSize * len(spots)
-	fmt.Printf("hots %dx%d\n", width, height)
+	s.debug("hots %dx%d\n", width, height)
 	outrect := image.Rect(0, 0, width, height)
 	out := image.NewRGBA(outrect)
 	for i, spt := range spots {
@@ -582,7 +591,7 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 	for x := 100; x < it.Rect.Max.X-100; x += 50 {
 		yte := yTopLineFind(it, x, s.scanThresh)
 		if yte < it.Rect.Max.Y/2 {
-			//fmt.Printf("[%d,%d]\n", x, yte)
+			//s.debug("[%d,%d]\n", x, yte)
 			topPoints = append(topPoints, point{x, yte})
 			hitcount++
 		} else {
@@ -590,7 +599,7 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 		}
 	}
 	slope, intercept := ordinaryLeastSquares(topPoints)
-	fmt.Printf("top line %d hit %d miss, slope=%f intercept=%f\n", hitcount, misscount, slope, intercept)
+	s.debug("top line %d hit %d miss, slope=%f intercept=%f\n", hitcount, misscount, slope, intercept)
 	worstd := 0.0
 	for _, pt := range topPoints {
 		d := pointLineDistance(slope, intercept, pt.x, pt.y)
@@ -626,7 +635,7 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 		y = yte
 	}
 	topRight := point{x, y}
-	fmt.Printf("topleft (%d,%d) topright (%d,%d)\n", topLeft.x, topLeft.y, topRight.x, topRight.y)
+	s.debug("topleft (%d,%d) topright (%d,%d)\n", topLeft.x, topLeft.y, topRight.x, topRight.y)
 
 	s.origToScanned = newTransform(s.origTopLeft, s.origTopRight, topLeft, topRight)
 	// TODO: detect if we failed to detect a reasonable top line and return error
@@ -687,7 +696,7 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 							stv = 0
 						}
 						if stv != scratch[(hotspotSize*iy)+ix] {
-							//fmt.Printf(" %d,%d", x, y)
+							//s.debug(" %d,%d", x, y)
 							ssd++
 						}
 					}
@@ -697,19 +706,19 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 					debugi.Set(dxi+(hotspotSize*2), dyi+(hotspotSize*spoti), color.Gray{uint8(ssd)})
 				}
 				if ssd < bestssd {
-					//fmt.Printf("(%d,%d) %d -> (%d,%d) %d\n", bestdx, bestdy, bestssd, dx, dy, ssd)
+					//s.debug("(%d,%d) %d -> (%d,%d) %d\n", bestdx, bestdy, bestssd, dx, dy, ssd)
 					bestdx = dx
 					bestdy = dy
 					bestssd = ssd
 				} else {
-					//fmt.Printf("(%d,%d) %d\n", dx, dy, ssd)
+					//s.debug("(%d,%d) %d\n", dx, dy, ssd)
 				}
 			}
 		}
 		if bestdx != 0 || bestdy != 0 {
-			fmt.Printf("refine transform %d,%d -> %d,%d (%d, %d)\n", spot.x, spot.y, spot.x+bestdx, spot.y+bestdy, bestdx, bestdy)
+			s.debug("refine transform %d,%d -> %d,%d (%d, %d)\n", spot.x, spot.y, spot.x+bestdx, spot.y+bestdy, bestdx, bestdy)
 		} else {
-			fmt.Printf("refine transform no change\n")
+			s.debug("refine transform no change\n")
 		}
 		if debugi != nil {
 			for iy := 0; iy < hotspotSize; iy++ {
@@ -729,7 +738,7 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 		// TODO: subpixel refinement
 	}
 	fmat := FindTransform(sources, dests)
-	fmt.Printf("transform %v\n", fmat)
+	s.debug("transform %v\n", fmat)
 	s.origToScanned = &MatrixTransform{fmat}
 	if targetsPngPath != "" {
 		imout, err := os.Create(targetsPngPath)
@@ -779,7 +788,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) (marked map[string]map[string]bo
 	if it.Rect.Min.X != 0 || it.Rect.Min.Y != 0 {
 		return nil, fmt.Errorf("image origin not 0,0 but %d,%d", it.Rect.Min.X, it.Rect.Min.Y)
 	}
-	fmt.Printf("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
+	s.debug("it YStride %d CStride %d SubsampleRatio %v Rect %v\n", it.YStride, it.CStride, it.SubsampleRatio, it.Rect)
 	// pxy(it, 0, 0)
 	// pxy(it, 1, 0)
 	// pxy(it, 2, 0)
@@ -787,15 +796,15 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) (marked map[string]map[string]bo
 	// pxy(it, 0, 2)
 	// pxy(it, 50, 50)
 	// pxy(it, it.Rect.Max.X-1, it.Rect.Max.Y-1)
-	//fmt.Printf("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
-	//fmt.Printf("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
+	//s.debug("(50,50) Y=%d, (50,50) CrCb=%d\n", it.COffset(50, 50), it.YOffset(50, 50))
+	//s.debug("(%d,%d) Y=%d, (%d,%d) CrCb=%d\n", it.Rect.Max.X-1, it.Rect.Max.Y-1, it.COffset(it.Rect.Max.X-1, it.Rect.Max.Y-1), it.Rect.Max.X-1, it.Rect.Max.Y-1, it.YOffset(it.Rect.Max.X-1, it.Rect.Max.Y-1))
 
 	s.hist = yHistogram(it)
 	s.scanThresh = otsuThreshold(s.hist)
-	fmt.Printf("Otsu threshold %d\n", s.scanThresh)
+	s.debug("Otsu threshold %d\n", s.scanThresh)
 	if false {
 		for i, v := range s.hist {
-			fmt.Printf("hist[%3d] %6d\n", i, v)
+			s.debug("hist[%3d] %6d\n", i, v)
 		}
 	}
 	misscount := 0
@@ -803,13 +812,13 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) (marked map[string]map[string]bo
 	for y := 100; y < it.Rect.Max.Y-100; y += 50 {
 		xle := yLeftLineFind(it, y, s.scanThresh)
 		if xle < it.Rect.Max.X/2 {
-			//fmt.Printf("[%d,%d]\n", xle, y)
+			//s.debug("[%d,%d]\n", xle, y)
 			hitcount++
 		} else {
 			misscount++
 		}
 	}
-	fmt.Printf("left line %d hit %d miss\n", hitcount, misscount)
+	s.debug("left line %d hit %d miss\n", hitcount, misscount)
 
 	err = s.topLineYCbCr(it)
 	if err != nil {
@@ -890,7 +899,7 @@ func (s *Scanner) measureBubble(it *image.YCbCr, xywh []float64) (darkCount, pxC
 	// TODO: measure extraneous marks in ballot and flag for review
 	return
 	/*
-		fmt.Printf("%d/%d dark/all px\n", darkCount, pxCount)
+		s.debug("%d/%d dark/all px\n", darkCount, pxCount)
 		if darkCount > ((pxCount * 7) / 10) {
 		}
 	*/
@@ -903,7 +912,7 @@ func (s *Scanner) measureScannedBubbles(it *image.YCbCr) (marked map[string]map[
 			conout := make(map[string]bool)
 			for cselName, xywh := range csels {
 				darkCount, pxCount := s.measureBubble(it, xywh)
-				fmt.Printf("%s\t%s\t%d/%d dark/all px\n", contestName, cselName, darkCount, pxCount)
+				s.debug("%s\t%s\t%d/%d dark/all px\n", contestName, cselName, darkCount, pxCount)
 				if darkCount > ((pxCount * 7) / 10) {
 					conout[cselName] = true
 				}
@@ -981,7 +990,7 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 		}
 		// TODO: record mediocre matches with 30%-70% fill, flag for inspection
 		// TODO: measure extraneous marks in ballot and flag for review
-		fmt.Printf("%d/%d dark/all px\n", darkCount, pxCount)
+		s.debug("%d/%d dark/all px\n", darkCount, pxCount)
 		if darkCount > ((pxCount * 7) / 10) {
 			oc := color.RGBA{0, 255, 0, 255}
 			for iy := 0; iy < outHeightPx; iy++ {
@@ -1062,6 +1071,7 @@ func main() {
 		return
 	}
 	var s Scanner
+	s.debugOut = os.Stderr
 	err = s.readBubblesJson(bubbleJsonPath)
 	maybeFail(err, "%s: %s", bubbleJsonPath, err)
 	fmt.Printf("ds %#v\n", s.bj.DrawSettings)

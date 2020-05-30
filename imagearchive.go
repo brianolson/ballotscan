@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	cbor "github.com/brianolson/cbor_go"
+	"go.etcd.io/bbolt"
 )
 
 var BytesPerImageArchiveFile uint64 = 10000000
@@ -27,11 +27,10 @@ func NewFileImageArchiver(path string) (archie ImageArchiver, err error) {
 	if err != nil {
 		return
 	}
-	// TODO: read previous archive file and pre-warm dup hashes
 	out := &fileImageArchiver{path: path}
-	err = out.loadDupCache()
+	err = out.ensureDupDB()
 	if err != nil {
-		log.Printf("%s: loadDupcache warning %s", path, err.Error())
+		return nil, err
 	}
 	return out, nil
 }
@@ -39,9 +38,7 @@ func NewFileImageArchiver(path string) (archie ImageArchiver, err error) {
 type fileImageArchiver struct {
 	path string
 
-	recentHashesCBuf    []uint64
-	recentHashesMap     map[uint64]bool
-	recentHashesCBufPos int
+	dupdb *bbolt.DB
 
 	fname string
 	fpath string
@@ -105,25 +102,28 @@ func (fia *fileImageArchiver) ArchiveImage(imbytes []byte, r *http.Request) {
 	}
 }
 
+var imhashes = []byte("imh")
+var trueByte = []byte("t")
+
+// Checks image bytes against dup database, returns true if already seen.
+// Records image bytes hash in dup database so that next time it will have been seen.
 func (fia *fileImageArchiver) isDup(imbytes []byte) bool {
 	hasher := fnv.New64a()
 	hasher.Write(imbytes)
-	imhash := hasher.Sum64()
+	var imhash [8]byte
+	hasher.Sum(imhash[:0])
 
-	if fia.recentHashesCBuf == nil {
-		fia.recentHashesCBuf = make([]uint64, 4000)
-		fia.recentHashesMap = make(map[uint64]bool, 4000)
-	} else {
-		if fia.recentHashesMap[imhash] {
-			// duplicate found
-			return true
+	var hit bool
+	fia.dupdb.Update(func(tx *bbolt.Tx) error {
+		bu := tx.Bucket(imhashes)
+		val := bu.Get(imhash[:])
+		hit = val != nil
+		if !hit {
+			bu.Put(imhash[:], trueByte)
 		}
-		fia.recentHashesCBufPos++
-		delete(fia.recentHashesMap, fia.recentHashesCBuf[fia.recentHashesCBufPos])
-	}
-	fia.recentHashesCBuf[fia.recentHashesCBufPos] = imhash
-	fia.recentHashesMap[imhash] = true
-	return false
+		return nil
+	})
+	return hit
 }
 
 func (fia *fileImageArchiver) newFout() (err error) {
@@ -138,52 +138,19 @@ func (fia *fileImageArchiver) newFout() (err error) {
 	return
 }
 
-func (fia *fileImageArchiver) loadDupCache() (err error) {
-	dir, err := os.Open(fia.path)
+func (fia *fileImageArchiver) ensureDupDB() (err error) {
+	dupdbpath := filepath.Join(fia.path, "dupdb")
+	db, err := bbolt.Open(dupdbpath, 0600, nil)
 	if err != nil {
-		return
+		return fmt.Errorf("%s: %v", dupdbpath, err)
 	}
-	newestpath := ""
-	var newestTime time.Time
-	names, err := dir.Readdirnames(0)
-	for _, fname := range names {
-		if strings.HasPrefix(fname, "ima_") && strings.HasSuffix(fname, ".cbor") {
-			fpath := filepath.Join(fia.path, fname)
-			fi, err := os.Lstat(fpath)
-			if err != nil {
-				continue
-			}
-			mtime := fi.ModTime()
-			if mtime.After(newestTime) {
-				newestTime = mtime
-				newestpath = fpath
-			}
-		}
+	err = db.Update(func(tx *bbolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(imhashes)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %v", dupdbpath, err)
 	}
-	if newestpath != "" {
-		fin, err := os.Open(newestpath)
-		if err != nil {
-			return err
-		}
-		dec := cbor.NewDecoder(fin)
-		fia.recentHashesCBuf = make([]uint64, 4000)
-		fia.recentHashesMap = make(map[uint64]bool, 4000)
-		fia.recentHashesCBufPos = 0
-		count := 0
-		for true {
-			var rec ArchiveImageRecord
-			err = dec.Decode(&rec)
-			if err != nil {
-				break
-			}
-			hasher := fnv.New64a()
-			hasher.Write(rec.Image)
-			imhash := hasher.Sum64()
-			fia.recentHashesCBuf[fia.recentHashesCBufPos] = imhash
-			fia.recentHashesMap[imhash] = true
-			count++
-		}
-		log.Printf("%s: loaded %d imhash", newestpath, count)
-	}
+	fia.dupdb = db
 	return nil
 }
