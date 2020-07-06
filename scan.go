@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -10,10 +9,8 @@ import (
 	"image/png"
 	_ "image/png"
 	"io"
-	"log"
 	"math"
 	"math/rand"
-	"net/http"
 	"os"
 )
 
@@ -1024,65 +1021,4 @@ type BubblesJson struct {
 
 	// Bubbles is a list per ballot style, indexed in the same order as the source document ballot styles.
 	Bubbles []Contest `json:"bubbles"`
-}
-
-var (
-	bubbleJsonPath string
-	origPngPath    string
-	targetsPngPath string // debug png with sync targets
-	bubblesPngPath string // debug png with bubbles from scan
-	bubOrigPngPath string // debug png with bubbles from source
-	debugPngPath   string
-	scanImgPath    string
-
-	serveAddr       string
-	servePrefix     string
-	studioPrefix    string
-	imageArchiveDir string
-)
-
-func main() {
-	flag.StringVar(&bubbleJsonPath, "bubbles", "", "bubbles.json")
-	flag.StringVar(&origPngPath, "orig", "", "orig png")
-	flag.StringVar(&debugPngPath, "dbpng", "", "debug png out")
-	flag.StringVar(&bubblesPngPath, "bubpng", "", "debug bubbles png out")
-	flag.StringVar(&bubOrigPngPath, "buborig", "", "debug bubbles from source")
-	flag.StringVar(&targetsPngPath, "targets", "", "debug targets png out")
-	flag.StringVar(&scanImgPath, "scan", "", "scan img in")
-
-	flag.StringVar(&serveAddr, "httpd", "", "host:port to serve on")
-	flag.StringVar(&servePrefix, "servePrefix", "", "app prefix, e.g. /bscan")
-	flag.StringVar(&studioPrefix, "studio", "http://localhost:5000/", "base URL of ballotstudio app")
-	flag.StringVar(&imageArchiveDir, "imageArchiveDir", "", "directory to archive images to (server will mkdir -p if needed)")
-	flag.Parse()
-
-	var err error
-	if len(serveAddr) > 0 {
-		xserver := NewScanServer()
-		xserver.appPrefix = servePrefix
-		xserver.studioPrefix = studioPrefix
-		if imageArchiveDir != "" {
-			xserver.archiver, err = NewFileImageArchiver(imageArchiveDir)
-			maybeFail(err, "%s: %v", imageArchiveDir, err)
-		}
-		log.Printf("serving\t%s", serveAddr)
-		err = http.ListenAndServe(serveAddr, xserver)
-		fmt.Fprintf(os.Stderr, "ListenAndServe(%v): %v", serveAddr, err)
-		return
-	}
-	var s Scanner
-	s.debugOut = os.Stderr
-	err = s.readBubblesJson(bubbleJsonPath)
-	maybeFail(err, "%s: %s", bubbleJsonPath, err)
-	fmt.Printf("ds %#v\n", s.bj.DrawSettings)
-	fmt.Printf("ds %#v\n", s.bj.Bubbles)
-	err = s.readOrigImage(origPngPath)
-	maybeFail(err, "%s: %s\n", origPngPath, err)
-	if bubOrigPngPath != "" {
-		s.debugOrigBubbles(bubOrigPngPath)
-	}
-
-	marked, err := s.readScannedImage(scanImgPath)
-	maybeFail(err, "%s: %s\n", scanImgPath, err)
-	fmt.Fprintf(os.Stdout, "marked: %v\n", marked)
 }
