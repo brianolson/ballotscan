@@ -14,10 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"bolson.org/~/src/ballotscan/scan"
 )
 
 type ScanServer struct {
-	bubbleCache     map[int64]*BubblesJson
+	bubbleCache     map[int64]*scan.BubblesJson
 	pngCache        map[int64][]byte
 	bubbleCacheLock sync.Mutex
 
@@ -31,7 +33,7 @@ type ScanServer struct {
 
 func NewScanServer() *ScanServer {
 	out := new(ScanServer)
-	out.bubbleCache = make(map[int64]*BubblesJson)
+	out.bubbleCache = make(map[int64]*scan.BubblesJson)
 	out.pngCache = make(map[int64][]byte)
 	out.appPrefix = ""
 	out.studioPrefix = ""
@@ -66,7 +68,7 @@ func (ss *ScanServer) studioUrl(suffix string) string {
 }
 
 // Looks up bubbles.json from ballotstudio service {studioPrefix}/election/{electionid}_bubbles.json
-func (ss *ScanServer) getBubbles(electionid int64) (bj *BubblesJson, err error) {
+func (ss *ScanServer) getBubbles(electionid int64) (bj *scan.BubblesJson, err error) {
 	// two small lock windows. do _not_ hold the lock during potentially slow HTTP GET
 	ss.bubbleCacheLock.Lock()
 	var ok bool
@@ -85,7 +87,7 @@ func (ss *ScanServer) getBubbles(electionid int64) (bj *BubblesJson, err error) 
 		return nil, fmt.Errorf("bubbles not json but %#v", contentType)
 	}
 	jd := json.NewDecoder(response.Body)
-	bj = new(BubblesJson)
+	bj = new(scan.BubblesJson)
 	err = jd.Decode(bj)
 	if err == nil {
 		ss.bubbleCacheLock.Lock()
@@ -169,9 +171,9 @@ func (ss *ScanServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var s Scanner
-	s.bj = *bubbles
-	s.setOrigImage(orig)
+	var s scan.Scanner
+	s.Bj = *bubbles
+	s.SetOrigImage(orig)
 
 	if isImage(r.Header.Get("Content-Type")) {
 		// raw POST body image
@@ -220,7 +222,7 @@ func isImage(contentType string) bool {
 	return strings.HasPrefix(contentType, "image/")
 }
 
-func (ss *ScanServer) doim(w http.ResponseWriter, r *http.Request, imbytes []byte, s *Scanner, msg string) {
+func (ss *ScanServer) doim(w http.ResponseWriter, r *http.Request, imbytes []byte, s *scan.Scanner, msg string) {
 	im, format, err := image.Decode(bytes.NewReader(imbytes))
 	if err != nil {
 		log.Printf("bad image decode %v format=%v err=%v", msg, format, err)
@@ -230,7 +232,7 @@ func (ss *ScanServer) doim(w http.ResponseWriter, r *http.Request, imbytes []byt
 	if ss.archiver != nil {
 		go ss.archiver.ArchiveImage(imbytes, r)
 	}
-	marked, err := s.processScannedImage(im)
+	marked, err := s.ProcessScannedImage(im)
 	if err != nil {
 		textResponse(w, http.StatusBadRequest, err.Error())
 		return

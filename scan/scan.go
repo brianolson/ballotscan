@@ -1,4 +1,4 @@
-package main
+package scan
 
 import (
 	"encoding/json"
@@ -287,7 +287,7 @@ func colorY(c color.Color) uint8 {
 }
 
 type Scanner struct {
-	bj BubblesJson
+	Bj BubblesJson
 
 	orig         image.Image
 	origPxPerPt  float64
@@ -300,54 +300,58 @@ type Scanner struct {
 
 	origToScanned AffineTransform
 
-	debugOut io.Writer
+	DebugOut io.Writer
+
+	TargetsPngPath string
+	DebugPngPath   string
+	BubblesPngPath string
 }
 
 func (s *Scanner) debug(format string, args ...interface{}) {
-	if s.debugOut != nil {
-		fmt.Fprintf(s.debugOut, format, args...)
+	if s.DebugOut != nil {
+		fmt.Fprintf(s.DebugOut, format, args...)
 	}
 }
 
-func (s *Scanner) readBubblesJson(path string) error {
+func (s *Scanner) ReadBubblesJson(path string) error {
 	fin, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer fin.Close()
 	jd := json.NewDecoder(fin)
-	return jd.Decode(&s.bj)
+	return jd.Decode(&s.Bj)
 }
 
-func (s *Scanner) readOrigImage(origname string) error {
+func (s *Scanner) ReadOrigImage(origname string) error {
 	r, err := os.Open(origname)
 	maybeFail(err, "%s: %s", origname, err)
 	defer r.Close()
 	orig, format, err := image.Decode(r)
 	maybeFail(err, "%s: %v %s", origname, format, err)
-	return s.setOrigImage(orig)
+	return s.SetOrigImage(orig)
 }
 
-func (s *Scanner) setOrigImage(orig image.Image) error {
+func (s *Scanner) SetOrigImage(orig image.Image) error {
 	s.orig = orig
 	orect := orig.Bounds()
 	if orect.Min.X != 0 || orect.Min.Y != 0 {
 		return fmt.Errorf("nonzero origin for original pic. WAT?\n")
 	}
 	s.debug("orig %T %v\n", orig, orect)
-	origPxPerPtX := float64(orect.Max.X-orect.Min.X) / s.bj.DrawSettings.PageSize[0]
-	origPxPerPtY := float64(orect.Max.Y-orect.Min.Y) / s.bj.DrawSettings.PageSize[1]
+	origPxPerPtX := float64(orect.Max.X-orect.Min.X) / s.Bj.DrawSettings.PageSize[0]
+	origPxPerPtY := float64(orect.Max.Y-orect.Min.Y) / s.Bj.DrawSettings.PageSize[1]
 	if math.Abs((origPxPerPtY/origPxPerPtX)-1) > 0.01 {
 		return fmt.Errorf("orig scale not square: mx = %f, my = %f\n", origPxPerPtX, origPxPerPtY)
 	}
 	s.origPxPerPt = (origPxPerPtX + origPxPerPtY) / 2.0
 	s.origTopLeft = point{
-		x: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
-		y: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
+		x: int(s.Bj.DrawSettings.PageMargin * s.origPxPerPt),
+		y: int(s.Bj.DrawSettings.PageMargin * s.origPxPerPt),
 	}
 	s.origTopRight = point{
-		x: int((s.bj.DrawSettings.PageSize[0] - s.bj.DrawSettings.PageMargin) * s.origPxPerPt),
-		y: int(s.bj.DrawSettings.PageMargin * s.origPxPerPt),
+		x: int((s.Bj.DrawSettings.PageSize[0] - s.Bj.DrawSettings.PageMargin) * s.origPxPerPt),
+		y: int(s.Bj.DrawSettings.PageMargin * s.origPxPerPt),
 	}
 	s.debug("top line orig (%d,%d)-(%d,%d)\n", s.origTopLeft.x, s.origTopLeft.y, s.origTopRight.x, s.origTopRight.y)
 
@@ -362,7 +366,7 @@ func (s *Scanner) setOrigImage(orig image.Image) error {
 	return nil
 }
 
-func (s *Scanner) debugOrigBubbles(outpath string) error {
+func (s *Scanner) DebugOrigBubbles(outpath string) error {
 	imout, err := os.Create(outpath)
 	if err != nil {
 		return fmt.Errorf("%s: could not create, %v", outpath, err)
@@ -372,7 +376,7 @@ func (s *Scanner) debugOrigBubbles(outpath string) error {
 	sourceSelectionBounds := make([][]float64, 0, 100)
 	maxWidth := 0.0
 	maxHeight := 0.0
-	for _, ballotType := range s.bj.Bubbles {
+	for _, ballotType := range s.Bj.Bubbles {
 		for _, csels := range ballotType { // _ = contestName
 			for _, xywh := range csels { // _ = cselName
 				sourceSelectionBounds = append(sourceSelectionBounds, xywh)
@@ -551,7 +555,7 @@ func (s *Scanner) hotspotsDebugImage(spots []point, it *image.YCbCr) *image.RGBA
 	return out
 }
 
-func (s *Scanner) readScannedImage(fname string) (marked map[string]map[string]bool, err error) {
+func (s *Scanner) ReadScannedImage(fname string) (marked map[string]map[string]bool, err error) {
 	r, err := os.Open(fname)
 	if err != nil {
 		return nil, err
@@ -561,10 +565,10 @@ func (s *Scanner) readScannedImage(fname string) (marked map[string]map[string]b
 	if err != nil {
 		return nil, err
 	}
-	return s.processScannedImage(im)
+	return s.ProcessScannedImage(im)
 }
 
-func (s *Scanner) processScannedImage(im image.Image) (marked map[string]map[string]bool, err error) {
+func (s *Scanner) ProcessScannedImage(im image.Image) (marked map[string]map[string]bool, err error) {
 	switch it := im.(type) {
 	case *image.YCbCr:
 		return s.processYCbCr(it)
@@ -642,7 +646,7 @@ func (s *Scanner) topLineYCbCr(it *image.YCbCr) error {
 func (s *Scanner) refineTransform(it *image.YCbCr) error {
 	spots := s.findOrigImageHotspots()
 	var debugi *image.RGBA
-	if targetsPngPath != "" {
+	if s.TargetsPngPath != "" {
 		debugi = s.hotspotsDebugImage(spots, it)
 	}
 
@@ -737,12 +741,12 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 	fmat := FindTransform(sources, dests)
 	s.debug("transform %v\n", fmat)
 	s.origToScanned = &MatrixTransform{fmat}
-	if targetsPngPath != "" {
-		imout, err := os.Create(targetsPngPath)
-		maybeFail(err, "%s: %s\n", targetsPngPath, err)
+	if s.TargetsPngPath != "" {
+		imout, err := os.Create(s.TargetsPngPath)
+		maybeFail(err, "%s: %s\n", s.TargetsPngPath, err)
 		defer imout.Close()
 		err = png.Encode(imout, debugi)
-		maybeFail(err, "%s: %s\n", targetsPngPath, err)
+		maybeFail(err, "%s: %s\n", s.TargetsPngPath, err)
 	}
 	return nil
 }
@@ -822,12 +826,12 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) (marked map[string]map[string]bo
 		return nil, err
 	}
 	s.refineTransform(it)
-	if debugPngPath != "" {
+	if s.DebugPngPath != "" {
 		dbimg, err := s.translateWholeScanToOrig(it)
 		if err != nil {
 			return nil, err
 		}
-		dbfout, err := os.Create(debugPngPath)
+		dbfout, err := os.Create(s.DebugPngPath)
 		if err != nil {
 			return nil, err
 		}
@@ -836,7 +840,7 @@ func (s *Scanner) processYCbCr(it *image.YCbCr) (marked map[string]map[string]bo
 			return nil, err
 		}
 	}
-	if bubblesPngPath != "" {
+	if s.BubblesPngPath != "" {
 		err = s.debugScannedBubbles(it)
 		if err != nil {
 			return nil, err
@@ -904,7 +908,7 @@ func (s *Scanner) measureBubble(it *image.YCbCr, xywh []float64) (darkCount, pxC
 
 func (s *Scanner) measureScannedBubbles(it *image.YCbCr) (marked map[string]map[string]bool) {
 	marked = make(map[string]map[string]bool)
-	for _, ballotType := range s.bj.Bubbles {
+	for _, ballotType := range s.Bj.Bubbles {
 		for contestName, csels := range ballotType {
 			conout := make(map[string]bool)
 			for cselName, xywh := range csels {
@@ -921,16 +925,16 @@ func (s *Scanner) measureScannedBubbles(it *image.YCbCr) (marked map[string]map[
 }
 
 func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
-	imout, err := os.Create(bubblesPngPath)
+	imout, err := os.Create(s.BubblesPngPath)
 	if err != nil {
-		return fmt.Errorf("%s: %s", bubblesPngPath, err)
+		return fmt.Errorf("%s: %s", s.BubblesPngPath, err)
 	}
 	defer imout.Close()
 
 	sourceSelectionBounds := make([][]float64, 0, 100)
 	maxWidth := 0.0
 	maxHeight := 0.0
-	for _, ballotType := range s.bj.Bubbles {
+	for _, ballotType := range s.Bj.Bubbles {
 		for _, csels := range ballotType { // _ = contestName
 			for _, xywh := range csels { // _ = cselName
 				sourceSelectionBounds = append(sourceSelectionBounds, xywh)
