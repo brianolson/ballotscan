@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"bolson.org/~/src/ballotscan/scan"
+	"github.com/brianolson/ballotscan/scan"
 )
 
 type ScanServer struct {

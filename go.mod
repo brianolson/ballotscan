@@ -1,4 +1,4 @@
-module bolson.org/~/src/ballotscan
+module github.com/brianolson/ballotscan
 
 go 1.14
 
