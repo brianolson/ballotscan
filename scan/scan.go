@@ -676,11 +676,12 @@ func (s *Scanner) refineTransform(it *image.YCbCr) error {
 		bestdy := hotspotSize
 		bestssd := hotspotSize * hotspotSize
 		// seek match
-		for dyi := 0; dyi < hotspotSize; dyi++ {
-			dy := dyi - (hotspotSize / 2)
+		const seekSize = hotspotSize * 3
+		for dyi := 0; dyi < seekSize; dyi++ {
+			dy := dyi - (seekSize / 2)
 			//for dy := hotspotSize / -2; dy < hotspotSize/2; dy++ {
-			for dxi := 0; dxi < hotspotSize; dxi++ {
-				dx := dxi - (hotspotSize / 2)
+			for dxi := 0; dxi < seekSize; dxi++ {
+				dx := dxi - (seekSize / 2)
 				//for dx := hotspotSize / -2; dx < hotspotSize/2; dx++ {
 				ssd := 0
 				// compare spot, offset by (dx,dy)
@@ -924,6 +925,12 @@ func (s *Scanner) measureScannedBubbles(it *image.YCbCr) (marked map[string]map[
 	return
 }
 
+type dsbrec struct {
+	xywh        []float64
+	contestName string
+	cselName    string
+}
+
 func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 	imout, err := os.Create(s.BubblesPngPath)
 	if err != nil {
@@ -931,13 +938,13 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 	}
 	defer imout.Close()
 
-	sourceSelectionBounds := make([][]float64, 0, 100)
+	recs := make([]dsbrec, 0, 100)
 	maxWidth := 0.0
 	maxHeight := 0.0
 	for _, ballotType := range s.Bj.Bubbles {
-		for _, csels := range ballotType { // _ = contestName
-			for _, xywh := range csels { // _ = cselName
-				sourceSelectionBounds = append(sourceSelectionBounds, xywh)
+		for contestName, csels := range ballotType {
+			for cselName, xywh := range csels {
+				recs = append(recs, dsbrec{xywh, contestName, cselName})
 				maxWidth = fmax(maxWidth, xywh[2])
 				maxHeight = fmax(maxHeight, xywh[3])
 			}
@@ -946,11 +953,12 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 	maxWidth = math.Ceil(maxWidth * s.origPxPerPt)
 	maxHeight = math.Ceil(maxHeight * s.origPxPerPt)
 	oiw := int(maxWidth) * 4
-	oih := int(maxHeight) * 4 * len(sourceSelectionBounds)
+	oih := int(maxHeight) * 4 * len(recs)
 	orect := image.Rect(0, 0, oiw, oih)
 	oi := image.NewNRGBA(orect)
 	opngBounds := s.orig.Bounds()
-	for i, xywh := range sourceSelectionBounds {
+	for i, rec := range recs {
+		xywh := rec.xywh
 		darkCount := 0
 		pxCount := 0
 		// (printx,printy) coord in pt from bottom left
@@ -991,7 +999,7 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 		}
 		// TODO: record mediocre matches with 30%-70% fill, flag for inspection
 		// TODO: measure extraneous marks in ballot and flag for review
-		s.debug("%d/%d dark/all px\n", darkCount, pxCount)
+		s.debug("%s\t%s\t%d/%d dark/all px (debug)\n", rec.contestName, rec.cselName, darkCount, pxCount)
 		if darkCount > ((pxCount * 7) / 10) {
 			oc := color.RGBA{0, 255, 0, 255}
 			for iy := 0; iy < outHeightPx; iy++ {
