@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"sort"
 )
 
 func maybeFail(err error, format string, args ...interface{}) {
@@ -930,6 +931,31 @@ type dsbrec struct {
 	contestName string
 	cselName    string
 }
+type dsbreca []dsbrec
+
+func (a *dsbreca) Less(i, j int) bool {
+	if (*a)[i].contestName < (*a)[i].contestName {
+		return true
+	}
+	if (*a)[i].contestName > (*a)[i].contestName {
+		return false
+	}
+	if (*a)[i].cselName < (*a)[i].cselName {
+		return true
+	}
+	if (*a)[i].cselName > (*a)[i].cselName {
+		return false
+	}
+	return false
+}
+func (a *dsbreca) Swap(i, j int) {
+	t := (*a)[i]
+	(*a)[i] = (*a)[j]
+	(*a)[j] = t
+}
+func (a *dsbreca) Len() int {
+	return len(*a)
+}
 
 func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 	imout, err := os.Create(s.BubblesPngPath)
@@ -950,6 +976,7 @@ func (s *Scanner) debugScannedBubbles(it *image.YCbCr) error {
 			}
 		}
 	}
+	sort.Sort(((*dsbreca)(&recs)))
 	maxWidth = math.Ceil(maxWidth * s.origPxPerPt)
 	maxHeight = math.Ceil(maxHeight * s.origPxPerPt)
 	oiw := int(maxWidth) * 4
